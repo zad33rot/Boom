@@ -1,223 +1,153 @@
+import os
+import random
+import sqlite3
+import httpx
+from typing import List, Dict
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
-from datetime import datetime
-import uvicorn
-import json
-import random
-from sqlalchemy import or_, and_
+from dotenv import load_dotenv
 
-import models
-import auth
-from database import SessionLocal, engine
-from encryption import encrypt_msg, decrypt_msg
+# Загружаем переменные из файла .env
+load_dotenv()
 
-# 1. Создаем таблицы
-models.Base.metadata.create_all(bind=engine)
+EXOLVE_API_KEY = os.getenv("EXOLVE_API_KEY")
+EXOLVE_NUMBER = os.getenv("EXOLVE_NUMBER")
 
-# 2. Инициализация приложения
 app = FastAPI()
 
-# Четко указываем адреса, где крутится твой React
+# Настройка CORS для десктопного приложения
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- АВТОРИЗАЦИЯ И НИКНЕЙМЫ ---
+# --- БАЗА ДАННЫХ ---
+def init_db():
+    conn = sqlite3.connect("messenger.db")
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users 
+                      (phone TEXT PRIMARY KEY, nickname TEXT, auth_code TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS messages 
+                      (sender TEXT, receiver TEXT, text TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    conn.commit()
+    conn.close()
 
-verification_codes = {}
+init_db()
 
-class PhoneAuth(BaseModel):
+# --- ЛОГИКА СМС (EXOLVE) ---
+async def send_sms_exolve(phone: str, code: str):
+    url = "https://api.exolve.ru/messaging/v1/sms/send"
+    headers = {
+        "Authorization": f"Bearer {EXOLVE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "number": EXOLVE_NUMBER,
+        "destination": phone,
+        "text": f"Ваш код подтверждения BOOM: {code}"
+    }
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url, json=payload, headers=headers)
+            if response.status_code == 200:
+                print(f"✅ СМС успешно отправлено на {phone}")
+            else:
+                print(f"❌ Ошибка Exolve: {response.text}")
+        except Exception as e:
+            print(f"⚠️ Ошибка сети при отправке СМС: {e}")
+
+# --- МОДЕЛИ ДАННЫХ ---
+class AuthRequest(BaseModel):
     phone: str
 
-class CodeVerify(BaseModel):
+class VerifyRequest(BaseModel):
     phone: str
     code: str
+    nickname: str = None
 
-class UpdateNick(BaseModel):
-    old_nick: str
-    new_nick: str
-
-@app.post("/send-code")
-def send_code(data: PhoneAuth):
+# --- ЭНДПОИНТЫ АВТОРИЗАЦИИ ---
+@app.post("/auth/send-code")
+async def send_code(req: AuthRequest):
     code = str(random.randint(1000, 9999))
-    verification_codes[data.phone] = code
-    print("\n" + "="*40)
-    print(f"📱 СМС для {data.phone}: ВАШ КОД {code}")
-    print("="*40 + "\n")
-    return {"message": "Код отправлен"}
+    conn = sqlite3.connect("messenger.db")
+    cursor = conn.cursor()
+    
+    # Сохраняем код в базу (создаем юзера, если его нет)
+    cursor.execute("INSERT OR REPLACE INTO users (phone, auth_code) VALUES (?, ?)", (req.phone, code))
+    conn.commit()
+    conn.close()
+    
+    # Отправляем реальное СМС
+    await send_sms_exolve(req.phone, code)
+    
+    return {"status": "code_sent"}
 
-@app.post("/verify-code")
-def verify_code(data: CodeVerify):
-    saved_code = verification_codes.get(data.phone)
-    if not saved_code or saved_code != data.code:
-        raise HTTPException(status_code=400, detail="Неверный код")
-        
-    db = SessionLocal()
-    try:
-        db_user = db.query(models.User).filter(models.User.phone == data.phone).first()
-        
-        if not db_user:
-            default_nick = f"boom_user_{random.randint(1000, 9999)}"
-            db_user = models.User(phone=data.phone, username=default_nick, hashed_password="sms_login")
-            db.add(db_user)
-            db.commit()
-            db.refresh(db_user)
-            
-        del verification_codes[data.phone]
-        
-        access_token = auth.create_access_token(data={"sub": db_user.username})
-        return {"access_token": access_token, "token_type": "bearer"}
-    finally:
-        db.close()
+@app.post("/auth/verify")
+async def verify_code(req: VerifyRequest):
+    conn = sqlite3.connect("messenger.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT auth_code FROM users WHERE phone = ?", (req.phone,))
+    result = cursor.fetchone()
+    
+    if result and result[0] == req.code:
+        if req.nickname:
+            cursor.execute("UPDATE users SET nickname = ? WHERE phone = ?", (req.nickname, req.phone))
+        conn.commit()
+        conn.close()
+        return {"status": "success", "phone": req.phone}
+    
+    conn.close()
+    raise HTTPException(status_code=400, detail="Invalid code")
 
-@app.post("/update-nickname")
-def update_nickname(data: UpdateNick):
-    db = SessionLocal()
-    try:
-        exist = db.query(models.User).filter(models.User.username == data.new_nick).first()
-        if exist:
-            raise HTTPException(status_code=400, detail="Этот никнейм уже занят 😔")
-
-        user = db.query(models.User).filter(models.User.username == data.old_nick).first()
-        if user:
-            user.username = data.new_nick
-            db.query(models.Message).filter(models.Message.sender == data.old_nick).update({"sender": data.new_nick})
-            db.query(models.Message).filter(models.Message.receiver == data.old_nick).update({"receiver": data.new_nick})
-            db.commit()
-
-            new_token = auth.create_access_token(data={"sub": user.username})
-            return {"access_token": new_token}
-        raise HTTPException(status_code=404)
-    finally:
-        db.close()
-
-# --- REST API (ПОЛЬЗОВАТЕЛИ И ИСТОРИЯ) ---
-
-@app.get("/users")
-def get_users(q: Optional[str] = None):
-    db = SessionLocal()
-    try:
-        query = db.query(models.User.username)
-        if q:
-            query = query.filter(models.User.username.ilike(f"%{q}%"))
-        users = query.all()
-        return [user[0] for user in users]
-    finally:
-        db.close()
-
-@app.get("/my-chats/{username}")
-def get_my_chats(username: str):
-    db = SessionLocal()
-    try:
-        # Достаем все сообщения пользователя и сортируем их от новых к старым (.desc())
-        messages = db.query(models.Message).filter(
-            or_(models.Message.sender == username, models.Message.receiver == username)
-        ).order_by(models.Message.timestamp.desc()).all()
-        
-        chats_info = []
-        seen_contacts = set()
-        
-        for m in messages:
-            # Определяем, кто собеседник в этом сообщении
-            contact = m.sender if m.sender != username else m.receiver
-            
-            # Поскольку сообщения отсортированы по убыванию, первое встреченное сообщение = самое свежее!
-            if contact not in seen_contacts:
-                seen_contacts.add(contact)
-                chats_info.append({
-                    "username": contact,
-                    "last_text": decrypt_msg(m.content), # Расшифровываем превью
-                    "timestamp": m.timestamp.strftime("%H:%M") if m.timestamp else ""
-                })
-        return chats_info
-    finally:
-        db.close()
-
-@app.get("/history/{user1}/{user2}")
-def get_history(user1: str, user2: str):
-    db = SessionLocal()
-    try:
-        messages = db.query(models.Message).filter(
-            or_(
-                and_(models.Message.sender == user1, models.Message.receiver == user2),
-                and_(models.Message.sender == user2, models.Message.receiver == user1)
-            )
-        ).order_by(models.Message.timestamp).all()
-        
-        return [
-            {
-                "sender": m.sender, 
-                "receiver": m.receiver, 
-                "text": decrypt_msg(m.content),
-                "timestamp": m.timestamp.strftime("%H:%M") if m.timestamp else ""
-            } for m in messages
-        ]
-    finally:
-        db.close()
-
-# --- WEBSOCKETS (ЧАТ В РЕАЛЬНОМ ВРЕМЕНИ) ---
-
+# --- МЕНЕДЖЕР СОЕДИНЕНИЙ WEBSOCKET ---
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: dict[str, WebSocket] = {}
+        self.active_connections: Dict[str, WebSocket] = {}
 
-    async def connect(self, websocket: WebSocket, username: str):
+    async def connect(self, phone: str, websocket: WebSocket):
         await websocket.accept()
-        self.active_connections[username] = websocket
-        await self.broadcast_status()
+        self.active_connections[phone] = websocket
 
-    def disconnect(self, username: str):
-        if username in self.active_connections:
-            del self.active_connections[username]
+    def disconnect(self, phone: str):
+        if phone in self.active_connections:
+            del self.active_connections[phone]
 
-    async def broadcast_status(self):
-        online_users = list(self.active_connections.keys())
-        msg = json.dumps({"type": "status", "users": online_users})
-        await self.broadcast(msg)
-
-    async def broadcast(self, message: str):
-        for connection in list(self.active_connections.values()):
-            await connection.send_text(message)
+    async def send_personal_message(self, message: dict, receiver_phone: str):
+        if receiver_phone in self.active_connections:
+            await self.active_connections[receiver_phone].send_json(message)
 
 manager = ConnectionManager()
 
-@app.websocket("/ws/{username}")
-async def websocket_endpoint(websocket: WebSocket, username: str):
-    await manager.connect(websocket, username)
-    db = SessionLocal()
+@app.websocket("/ws/{phone}")
+async def websocket_endpoint(websocket: WebSocket, phone: str):
+    await manager.connect(phone, websocket)
     try:
         while True:
-            data = await websocket.receive_text()
-            msg_data = json.loads(data)
+            data = await websocket.receive_json()
+            # data формат: {"receiver": "...", "text": "..."}
             
-            # Сервер теперь пересылает и статус "печатает", и статус "прочитано"
-            if msg_data.get("type") in ["typing", "read"]:
-                await manager.broadcast(data)
-                continue
+            # Сохраняем в базу
+            conn = sqlite3.connect("messenger.db")
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO messages (sender, receiver, text) VALUES (?, ?, ?)",
+                           (phone, data['receiver'], data['text']))
+            conn.commit()
+            conn.close()
             
-            encrypted_text = encrypt_msg(msg_data["text"])
-            new_msg = models.Message(
-                sender=msg_data["sender"], 
-                receiver=msg_data["receiver"], 
-                content=encrypted_text
-            )
-            db.add(new_msg)
-            db.commit()
-            
-            msg_data["timestamp"] = datetime.now().strftime("%H:%M")
-            await manager.broadcast(json.dumps(msg_data))
+            # Пересылаем получателю
+            await manager.send_personal_message({
+                "sender": phone,
+                "text": data['text']
+            }, data['receiver'])
             
     except WebSocketDisconnect:
-        manager.disconnect(username)
-        await manager.broadcast_status()
-    finally:
-        db.close()
+        manager.disconnect(phone)
 
 if __name__ == "__main__":
-    uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=True)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

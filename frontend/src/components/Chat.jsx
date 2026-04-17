@@ -45,7 +45,7 @@ export default function Chat({ token, currentUser, onLogout }) {
   }, []);
 
   const loadMyChats = () => {
-    fetch(`http://127.0.0.1:8000/my-chats/${currentUser}`)
+    fetch(`http://176.117.69.113:8000/my-chats/${currentUser}`)
       .then(res => res.json())
       .then(data => {
         if (data.length > 0 && typeof data[0] === 'object') {
@@ -65,14 +65,14 @@ export default function Chat({ token, currentUser, onLogout }) {
 
   useEffect(() => {
     if (searchQuery.trim() === '') { setSearchResults([]); return; }
-    fetch(`http://127.0.0.1:8000/users?q=${searchQuery}`)
+    fetch(`http://176.117.69.113:8000/users?q=${searchQuery}`)
       .then(res => res.json())
       .then(data => setSearchResults(data.filter(u => u !== currentUser)))
       .catch(err => console.error(err));
   }, [searchQuery, currentUser]);
 
   useEffect(() => {
-    socketRef.current = new WebSocket(`ws://127.0.0.1:8000/ws/${currentUser}`);
+    socketRef.current = new WebSocket(`ws://176.117.69.113:8000/ws/${currentUser}`);
     
     socketRef.current.onmessage = (event) => {
       const incomingMsg = JSON.parse(event.data);
@@ -143,7 +143,7 @@ export default function Chat({ token, currentUser, onLogout }) {
       }
 
       setMessages([]); 
-      fetch(`http://127.0.0.1:8000/history/${currentUser}/${selectedUser}`)
+      fetch(`http://176.117.69.113:8000/history/${currentUser}/${selectedUser}`)
         .then(res => res.json())
         .then(history => setMessages(history.map(m => ({ ...m, isRead: true }))))
         .catch(err => console.error(err));
@@ -213,7 +213,7 @@ export default function Chat({ token, currentUser, onLogout }) {
                     const newNick = document.getElementById('nicknameInput').value.trim();
                     if (newNick === '' || newNick === currentUser) return;
                     try {
-                      const res = await fetch('http://127.0.0.1:8000/update-nickname', {
+                      const res = await fetch('http://176.117.69.113:8000/update-nickname', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ old_nick: currentUser, new_nick: newNick })
                       });
@@ -269,7 +269,7 @@ export default function Chat({ token, currentUser, onLogout }) {
                         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                         fontWeight: unread > 0 ? '600' : 'normal' // Выделяем непрочитанное жирным
                       }}>
-                        {isTyping ? 'печатает... ✍️' : (lastMsg ? lastMsg.text : 'Нет сообщений')}
+                        {isTyping ? 'печатает... ' : (lastMsg ? lastMsg.text : 'Нет сообщений')}
                       </span>
                     </div>
 

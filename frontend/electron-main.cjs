@@ -2,29 +2,34 @@ const { app, BrowserWindow } = require('electron');
 const path = require('path');
 
 function createWindow() {
-  // Создаем окно нашего приложения
   const win = new BrowserWindow({
     width: 1000,
     height: 800,
-    minWidth: 400,
-    minHeight: 600,
-    autoHideMenuBar: true, // Скрываем скучное меню сверху
-    icon: path.join(__dirname, 'public', 'favicon.svg'), // Подтягиваем иконку Boom
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
+      contextIsolation: false, // Чтобы React и Electron лучше понимали друг друга
     },
   });
 
-  // Загружаем наш React-фронтенд (который крутится на Vite)
-  win.loadURL('http://localhost:5173');
+  // ПРОВЕРКА: Если мы в режиме разработки — грузим localhost
+  // Если мы уже упакованы в .exe — грузим файл из папки dist
+  const isDev = !app.isPackaged;
+
+  if (isDev) {
+    // ВАЖНО: Проверь, чтобы порт (5173) совпадал с тем, что пишет npm run dev!
+    win.loadURL('http://localhost:5173').catch(() => {
+        console.log("React server not found at 5173, retrying...");
+        setTimeout(() => win.loadURL('http://localhost:5173'), 2000);
+    });
+  } else {
+    // Путь к собранному файлу внутри .exe
+    win.loadFile(path.join(__dirname, 'dist', 'index.html'));
+  }
 }
 
-// Когда Electron готов - открываем окно
 app.whenReady().then(createWindow);
 
-// Закрываем программу, если закрыли все окна (стандартное поведение для Windows)
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  if (process.platform !== 'darwin') app.quit();
 });

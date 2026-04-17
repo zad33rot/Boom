@@ -19,12 +19,15 @@ models.Base.metadata.create_all(bind=engine)
 # 2. Инициализация приложения
 app = FastAPI()
 
+# Четко указываем адреса, где крутится твой React
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173", 
-        "http://127.0.0.1:5173"
-    ], # Четко указываем адреса, где крутится твой React
+        "http://127.0.0.1:5173",
+        "http://localhost:5174", 
+        "http://127.0.0.1:5174"
+    ], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -117,16 +120,27 @@ def get_users(q: Optional[str] = None):
 def get_my_chats(username: str):
     db = SessionLocal()
     try:
+        # Достаем все сообщения пользователя и сортируем их от новых к старым (.desc())
         messages = db.query(models.Message).filter(
             or_(models.Message.sender == username, models.Message.receiver == username)
-        ).all()
-        contacts = set()
+        ).order_by(models.Message.timestamp.desc()).all()
+        
+        chats_info = []
+        seen_contacts = set()
+        
         for m in messages:
-            if m.sender != username:
-                contacts.add(m.sender)
-            if m.receiver != username:
-                contacts.add(m.receiver)
-        return list(contacts)
+            # Определяем, кто собеседник в этом сообщении
+            contact = m.sender if m.sender != username else m.receiver
+            
+            # Поскольку сообщения отсортированы по убыванию, первое встреченное сообщение = самое свежее!
+            if contact not in seen_contacts:
+                seen_contacts.add(contact)
+                chats_info.append({
+                    "username": contact,
+                    "last_text": decrypt_msg(m.content), # Расшифровываем превью
+                    "timestamp": m.timestamp.strftime("%H:%M") if m.timestamp else ""
+                })
+        return chats_info
     finally:
         db.close()
 
@@ -161,6 +175,54 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket, username: str):
         await websocket.accept()
         self.active_connections[username] = websocket
+        await self.broadcast_status()
+
+    def disconnect(self, username: str):
+        if username in self.active_connections:
+            del self.active_connections[username]
+
+    async def broadcast_status(self):
+        online_users = list(self.active_connections.keys())
+        msg = json.dumps({"type": "status", "users": online_users})
+        await self.broadcast(msg)
+
+    async def broadcast(self, message: str):
+        for connection in list(self.active_connections.values()):
+            await connection.send_text(message)
+
+manager = ConnectionManager()
+
+@app.websocket("/ws/{username}")
+async def websocket_endpoint(websocket: WebSocket, username: str):
+    await manager.connect(websocket, username)
+    db = SessionLocal()
+    try:
+        while True:
+            data = await websocket.receive_text()
+            msg_data = json.loads(data)
+            
+            # Сервер теперь пересылает и статус "печатает", и статус "прочитано"
+            if msg_data.get("type") in ["typing", "read"]:
+                await manager.broadcast(data)
+                continue
+            
+            encrypted_text = encrypt_msg(msg_data["text"])
+            new_msg = models.Message(
+                sender=msg_data["sender"], 
+                receiver=msg_data["receiver"], 
+                content=encrypted_text
+            )
+            db.add(new_msg)
+            db.commit()
+            
+            msg_data["timestamp"] = datetime.now().strftime("%H:%M")
+            await manager.broadcast(json.dumps(msg_data))
+            
+    except WebSocketDisconnect:
+        manager.disconnect(username)
+        await manager.broadcast_status()
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=True)

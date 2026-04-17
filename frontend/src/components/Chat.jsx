@@ -1,14 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 
-// МАГИЯ АВАТАРОК: Компонент, который генерирует цветную аватарку по имени
 const Avatar = ({ name, size = 48, showOnline = false, isOnline = false, bgApp = '#17171e' }) => {
   const getColor = (str) => {
     let hash = 0;
     for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
-    // Генерируем сочный HSL цвет
     return `hsl(${hash % 360}, 70%, 55%)`;
   };
-  
   const color = getColor(name || 'A');
   const initial = name ? name.charAt(0).toUpperCase() : '?';
 
@@ -33,9 +30,15 @@ export default function Chat({ token, currentUser, onLogout }) {
   
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [typingUsers, setTypingUsers] = useState({});
+  const [unreadCounts, setUnreadCounts] = useState({});
+  const [lastMessages, setLastMessages] = useState({}); // НОВОЕ: Хранилище превьюшек
+  
   const socketRef = useRef(null);
+  const messagesEndRef = useRef(null);
   const [showProfile, setShowProfile] = useState(false);
-  const messagesEndRef = useRef(null); // Для автоскролла вниз
+  
+  const selectedUserRef = useRef(selectedUser);
+  useEffect(() => { selectedUserRef.current = selectedUser; }, [selectedUser]);
 
   useEffect(() => {
     if (Notification.permission === 'default') Notification.requestPermission();
@@ -44,7 +47,17 @@ export default function Chat({ token, currentUser, onLogout }) {
   const loadMyChats = () => {
     fetch(`http://127.0.0.1:8000/my-chats/${currentUser}`)
       .then(res => res.json())
-      .then(data => setMyChats(data))
+      .then(data => {
+        if (data.length > 0 && typeof data[0] === 'object') {
+          // Если сервер вернул новый формат с превьюшками
+          setMyChats(data.map(d => d.username));
+          const lastMsgs = {};
+          data.forEach(d => lastMsgs[d.username] = { text: d.last_text, timestamp: d.timestamp });
+          setLastMessages(lastMsgs);
+        } else {
+          setMyChats(data);
+        }
+      })
       .catch(err => console.error(err));
   };
 
@@ -63,7 +76,14 @@ export default function Chat({ token, currentUser, onLogout }) {
     
     socketRef.current.onmessage = (event) => {
       const incomingMsg = JSON.parse(event.data);
+      
       if (incomingMsg.type === 'status') { setOnlineUsers(incomingMsg.users); return; }
+
+      // ЗАЩИТА: Игнорируем чужие сообщения (если они долетели к нам по ошибке)
+      if (['message', 'read', 'typing'].includes(incomingMsg.type)) {
+        if (incomingMsg.sender !== currentUser && incomingMsg.receiver !== currentUser) return;
+      }
+      
       if (incomingMsg.type === 'typing') {
         if (incomingMsg.receiver === currentUser) {
           setTypingUsers(prev => ({ ...prev, [incomingMsg.sender]: true }));
@@ -72,50 +92,88 @@ export default function Chat({ token, currentUser, onLogout }) {
         return;
       }
 
+      if (incomingMsg.type === 'read') {
+        if (incomingMsg.receiver === currentUser) {
+          setMessages(prev => prev.map(m => 
+            (m.sender === currentUser && m.receiver === incomingMsg.sender) ? { ...m, isRead: true } : m
+          ));
+        }
+        return;
+      }
+
+      // Сохраняем сообщение в историю открытого чата
       setMessages((prev) => [...prev, incomingMsg]);
-      if (!myChats.includes(incomingMsg.sender) && incomingMsg.sender !== currentUser) loadMyChats();
-      if (incomingMsg.sender !== currentUser && Notification.permission === 'granted') {
+      
+      // НОВОЕ: Моментально обновляем превью в списке чатов слева
+      const partner = incomingMsg.sender === currentUser ? incomingMsg.receiver : incomingMsg.sender;
+      setLastMessages(prev => ({
+        ...prev, 
+        [partner]: { text: incomingMsg.text, timestamp: incomingMsg.timestamp || "только что" }
+      }));
+      
+      if (incomingMsg.sender !== currentUser) {
+        if (selectedUserRef.current !== incomingMsg.sender) {
+          setUnreadCounts(prev => ({ ...prev, [incomingMsg.sender]: (prev[incomingMsg.sender] || 0) + 1 }));
+        } else {
+          if (socketRef.current.readyState === WebSocket.OPEN) {
+            socketRef.current.send(JSON.stringify({ type: 'read', sender: currentUser, receiver: incomingMsg.sender }));
+          }
+        }
+      }
+
+      setMyChats(prev => {
+        if (!prev.includes(incomingMsg.sender) && incomingMsg.sender !== currentUser) return [incomingMsg.sender, ...prev];
+        if (!prev.includes(incomingMsg.receiver) && incomingMsg.receiver !== currentUser) return [incomingMsg.receiver, ...prev];
+        return prev;
+      });
+
+      if (incomingMsg.sender !== currentUser && selectedUserRef.current !== incomingMsg.sender && Notification.permission === 'granted') {
         new Notification(`Boom 💥: ${incomingMsg.sender}`, { body: incomingMsg.text });
       }
     };
+
     return () => { if (socketRef.current) socketRef.current.close(); };
-  }, [currentUser, myChats]);
+  }, [currentUser]);
 
   useEffect(() => {
     if (selectedUser) {
+      setUnreadCounts(prev => ({ ...prev, [selectedUser]: 0 }));
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: 'read', sender: currentUser, receiver: selectedUser }));
+      }
+
       setMessages([]); 
       fetch(`http://127.0.0.1:8000/history/${currentUser}/${selectedUser}`)
         .then(res => res.json())
-        .then(history => setMessages(history))
+        .then(history => setMessages(history.map(m => ({ ...m, isRead: true }))))
         .catch(err => console.error(err));
     }
   }, [selectedUser, currentUser]);
 
-  // Автоскролл к последнему сообщению
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-const sendMessage = () => {
-    // ДОБАВЛЕНО: Проверяем === WebSocket.OPEN
+  const sendMessage = () => {
     if (input.trim() !== '' && socketRef.current && socketRef.current.readyState === WebSocket.OPEN && selectedUser) {
-      const msgData = { type: 'message', sender: currentUser, receiver: selectedUser, text: input };
+      const msgData = { type: 'message', sender: currentUser, receiver: selectedUser, text: input, isRead: false };
       socketRef.current.send(JSON.stringify(msgData)); 
+      
+      // Мгновенно обновляем превью у себя, не дожидаясь ответа сервера
+      setLastMessages(prev => ({
+        ...prev,
+        [selectedUser]: { text: input, timestamp: "только что" }
+      }));
+      
       setInput('');
       
       if (!myChats.includes(selectedUser)) {
         setMyChats(prev => [selectedUser, ...prev]);
         setSearchQuery('');
       }
-    } else if (socketRef.current && socketRef.current.readyState !== WebSocket.OPEN) {
-      // Если связь оборвалась, мягко предупреждаем в консоли, а не крашим приложение
-      console.warn("Соединение с сервером потеряно. Пожалуйста, обновите страницу.");
     }
   };
 
   const handleInputChange = (e) => {
     setInput(e.target.value);
-    // ДОБАВЛЕНО: Проверяем === WebSocket.OPEN
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN && selectedUser) {
       socketRef.current.send(JSON.stringify({ type: 'typing', sender: currentUser, receiver: selectedUser }));
     }
@@ -141,47 +199,32 @@ const sendMessage = () => {
               <button onClick={() => setShowProfile(false)} style={{ background: 'transparent', border: 'none', color: theme.textMain, cursor: 'pointer', fontSize: '20px' }}>←</button>
               <h2 style={{ margin: 0, fontSize: '20px' }}>Мой профиль</h2>
             </div>
-            
             <div style={{ padding: '30px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
               <Avatar name={currentUser} size={100} />
               
-              {/* РЕДАКТОР НИКНЕЙМА */}
               <div style={{ marginTop: '20px', width: '100%' }}>
-                <p style={{ margin: '0 0 8px 0', fontSize: '13px', color: theme.textMuted }}>Ваш никнейм (виден всем):</p>
+                <p style={{ margin: '0 0 8px 0', fontSize: '13px', color: theme.textMuted }}>Ваш никнейм:</p>
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <span style={{ backgroundColor: theme.bgInput, padding: '12px', borderRadius: '12px 0 0 12px', color: theme.textMuted, border: `1px solid ${theme.border}`, borderRight: 'none' }}>@</span>
-                  <input 
-                    type="text" 
-                    id="nicknameInput"
-                    defaultValue={currentUser}
-                    style={{ flex: 1, padding: '12px 16px', borderRadius: '0 12px 12px 0', border: `1px solid ${theme.border}`, borderLeft: 'none', outline: 'none', backgroundColor: theme.bgInput, color: theme.textMain, fontSize: '16px', fontWeight: 'bold' }}
-                  />
+                  <input type="text" id="nicknameInput" defaultValue={currentUser} style={{ flex: 1, padding: '12px 16px', borderRadius: '0 12px 12px 0', border: `1px solid ${theme.border}`, borderLeft: 'none', outline: 'none', backgroundColor: theme.bgInput, color: theme.textMain, fontSize: '16px', fontWeight: 'bold' }} />
                 </div>
                 <button 
                   onClick={async () => {
                     const newNick = document.getElementById('nicknameInput').value.trim();
                     if (newNick === '' || newNick === currentUser) return;
-                    
                     try {
                       const res = await fetch('http://127.0.0.1:8000/update-nickname', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ old_nick: currentUser, new_nick: newNick })
                       });
                       const data = await res.json();
-                      if (res.ok) {
-                        localStorage.setItem('token', data.access_token);
-                        window.location.reload(); // Перезагружаем интерфейс для обновления данных
-                      } else {
-                        alert(data.detail); // Покажет ошибку "Никнейм занят"
-                      }
+                      if (res.ok) { localStorage.setItem('token', data.access_token); window.location.reload(); } 
+                      else { alert(data.detail); }
                     } catch (e) { console.error(e); }
                   }}
-                  style={{ width: '100%', padding: '12px', marginTop: '15px', borderRadius: '12px', border: 'none', backgroundColor: `${theme.accent}30`, color: theme.accent, fontWeight: 'bold', cursor: 'pointer', transition: 'background 0.2s' }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = `${theme.accent}50`}
-                  onMouseLeave={(e) => e.target.style.backgroundColor = `${theme.accent}30`}
+                  style={{ width: '100%', padding: '12px', marginTop: '15px', borderRadius: '12px', border: 'none', backgroundColor: `${theme.accent}30`, color: theme.accent, fontWeight: 'bold', cursor: 'pointer' }}
                 >
-                  Сохранить новый никнейм
+                  Сохранить
                 </button>
               </div>
 
@@ -197,16 +240,44 @@ const sendMessage = () => {
               </div>
               <input type="text" placeholder="Поиск чатов..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: 'none', outline: 'none', backgroundColor: theme.bgInput, color: theme.textMain, boxSizing: 'border-box' }}/>
             </div>
+            
             <div style={{ overflowY: 'auto', padding: '10px', flex: 1 }}>
               {displayUsers.map(user => {
                 const isOnline = onlineUsers.includes(user);
+                const unread = unreadCounts[user] || 0; 
+                const lastMsg = lastMessages[user]; // Достаем превью сообщения
+                const isTyping = typingUsers[user]; // Проверяем, печатает ли юзер
+                
                 return (
                   <div key={user} onClick={() => setSelectedUser(user)} style={{ padding: '12px', marginBottom: '4px', borderRadius: '10px', cursor: 'pointer', backgroundColor: selectedUser === user ? 'rgba(255, 42, 95, 0.1)' : 'transparent', border: selectedUser === user ? `1px solid ${theme.accent}` : '1px solid transparent', display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <Avatar name={user} size={48} showOnline={true} isOnline={isOnline} bgApp={theme.bgSidebar} />
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ fontWeight: '600', fontSize: '16px' }}>{user}</span>
-                      <span style={{ fontSize: '13px', color: isOnline ? '#00E676' : theme.textMuted }}>{isOnline ? 'в сети' : 'был(а) недавно'}</span>
+                    
+                    {/* ЦЕНТРАЛЬНЫЙ БЛОК: ИМЯ И ПОСЛЕДНЕЕ СООБЩЕНИЕ */}
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '2px' }}>
+                        <span style={{ fontWeight: '600', fontSize: '16px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user}</span>
+                        {/* Время последнего сообщения */}
+                        <span style={{ fontSize: '11px', color: theme.textMuted, marginLeft: '8px' }}>
+                          {lastMsg ? lastMsg.timestamp : ''}
+                        </span>
+                      </div>
+                      
+                      {/* Текст превью или надпись "печатает..." */}
+                      <span style={{ 
+                        fontSize: '13px', 
+                        color: isTyping ? theme.accent : theme.textMuted, 
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        fontWeight: unread > 0 ? '600' : 'normal' // Выделяем непрочитанное жирным
+                      }}>
+                        {isTyping ? 'печатает... ✍️' : (lastMsg ? lastMsg.text : 'Нет сообщений')}
+                      </span>
                     </div>
+
+                    {unread > 0 && (
+                      <div style={{ backgroundColor: theme.accent, color: 'white', borderRadius: '12px', padding: '3px 8px', fontSize: '12px', fontWeight: 'bold' }}>
+                        {unread}
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -244,19 +315,20 @@ const sendMessage = () => {
                       borderBottomLeftRadius: !isMine ? '4px' : '18px',
                       maxWidth: '60%', boxShadow: '0 2px 5px rgba(0,0,0,0.1)',
                       fontSize: '15px', lineHeight: '1.4',
-                      display: 'flex', alignItems: 'flex-end', gap: '10px'
+                      display: 'flex', alignItems: 'flex-end', gap: '8px'
                     }}>
-                      {/* Текст сообщения */}
                       <span style={{ wordBreak: 'break-word' }}>{msg.text}</span>
-                      
-                      {/* МЕТКА ВРЕМЕНИ */}
-                      <span style={{ fontSize: '11px', color: isMine ? 'rgba(255,255,255,0.7)' : theme.textMuted, whiteSpace: 'nowrap', marginBottom: '-2px' }}>
+                      <span style={{ fontSize: '11px', color: isMine ? 'rgba(255,255,255,0.7)' : theme.textMuted, whiteSpace: 'nowrap', marginBottom: '-2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                         {msg.timestamp || "только что"}
+                        {isMine && (
+                          <span style={{ color: msg.isRead ? '#00E676' : 'rgba(255,255,255,0.7)', fontWeight: 'bold', fontSize: '12px' }}>
+                            {msg.isRead ? '✓✓' : '✓'}
+                          </span>
+                        )}
                       </span>
                     </div>
                   );
               })}
-              {/* Невидимый элемент для автоскролла вниз */}
               <div ref={messagesEndRef} />
             </div>
 

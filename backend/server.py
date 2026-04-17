@@ -71,7 +71,7 @@ class VerifyRequest(BaseModel):
     nickname: str = None
 
 # --- ЭНДПОИНТЫ АВТОРИЗАЦИИ ---
-@app.post("/auth/send-code")
+@app.post("http://176.117.69.113:8000/auth/send-code")
 async def send_code(req: AuthRequest):
     code = str(random.randint(1000, 9999))
     conn = sqlite3.connect("messenger.db")
@@ -87,7 +87,7 @@ async def send_code(req: AuthRequest):
     
     return {"status": "code_sent"}
 
-@app.post("/auth/verify")
+@app.post("http://176.117.69.113:8000/auth/verify")
 async def verify_code(req: VerifyRequest):
     conn = sqlite3.connect("messenger.db")
     cursor = conn.cursor()

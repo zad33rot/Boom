@@ -1,13 +1,33 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+import sqlite3
 
-# Создаем файл базы данных в этой же папке
-SQLALCHEMY_DATABASE_URL = "sqlite:///./messenger.db"
+def init_db():
+    conn = sqlite3.connect("messenger.db")
+    cursor = conn.cursor()
+    
+    # Таблица пользователей: email - главный ключ
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            email TEXT PRIMARY KEY,
+            nickname TEXT,
+            password TEXT,
+            auth_code TEXT
+        )
+    ''')
+    
+    # Таблица сообщений
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender TEXT,
+            receiver TEXT,
+            text TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+    print("✅ База данных готова")
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base = declarative_base()
+if __name__ == "__main__":
+    init_db()

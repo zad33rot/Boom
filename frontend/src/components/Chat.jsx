@@ -1,205 +1,70 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-// Твой новый сервер
-const API_BASE_URL = 'http://193.233.139.208:8000';
-const WS_BASE_URL = 'ws://193.233.139.208:8000';
-
-export default function Chat() {
-  // Состояния авторизации
-  const [email, setEmail] = useState('');
-  const [code, setCode] = useState('');
-  const [nickname, setNickname] = useState('');
-  const [step, setStep] = useState(1); // 1 - ввод почты, 2 - ввод кода, 3 - чат
-  const [error, setError] = useState('');
-
-  // Состояния чата
+export default function Chat({ currentUser }) {
   const [messages, setMessages] = useState([]);
-  const [messageText, setMessageText] = useState('');
-  const [receiverEmail, setReceiverEmail] = useState('');
+  const [text, setText] = useState('');
+  const [search, setSearch] = useState('');
+  const [activeChat, setActiveChat] = useState(null);
   const ws = useRef(null);
 
-  // 1. Отправка почты для получения кода
-  const handleSendCode = async (e) => {
+  useEffect(() => {
+    ws.current = new WebSocket(`ws://193.233.139.208:8000/ws/${currentUser}`);
+    ws.current.onmessage = (e) => setMessages(prev => [...prev, JSON.parse(e.data)]);
+    return () => ws.current.close();
+  }, [currentUser]);
+
+  const send = (e) => {
     e.preventDefault();
-    setError('');
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/send-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email })
-      });
-
-      if (response.ok) {
-        setStep(2); // Переходим к вводу кода
-      } else {
-        setError('Ошибка при отправке кода. Проверь почту.');
-      }
-    } catch (err) {
-      setError('Сервер недоступен. Проверь подключение.');
-    }
+    if (!text || !activeChat) return;
+    const msg = { sender: currentUser, receiver: activeChat, text, time: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) };
+    ws.current.send(JSON.stringify(msg));
+    setMessages(prev => [...prev, msg]);
+    setText('');
   };
 
-  // 2. Проверка кода и вход
-  const handleVerifyCode = async (e) => {
-    e.preventDefault();
-    setError('');
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email, code: code, nickname: nickname })
-      });
+  const partners = [...new Set(messages.map(m => m.sender === currentUser ? m.receiver : m.sender))];
+  const filtered = partners.filter(p => p.includes(search));
+  const currentMsgs = messages.filter(m => (m.sender === currentUser && m.receiver === activeChat) || (m.sender === activeChat && m.receiver === currentUser));
 
-      if (response.ok) {
-        setStep(3); // Переходим в чат
-        connectWebSocket(email);
-      } else {
-        setError('Неверный код.');
-      }
-    } catch (err) {
-      setError('Ошибка соединения с сервером.');
-    }
-  };
-
-  // 3. Подключение к WebSocket для чата
-  const connectWebSocket = (userEmail) => {
-    ws.current = new WebSocket(`${WS_BASE_URL}/ws/${userEmail}`);
-    
-    ws.current.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      setMessages((prev) => [...prev, data]);
-    };
-
-    ws.current.onclose = () => {
-      console.log('Отключено от сервера. Пытаюсь переподключиться...');
-      setTimeout(() => connectWebSocket(userEmail), 3000);
-    };
-  };
-
-  // 4. Отправка сообщения в чате
-  const handleSendMessage = (e) => {
-    e.preventDefault();
-    if (ws.current && messageText && receiverEmail) {
-      const msgData = {
-        receiver: receiverEmail,
-        text: messageText,
-        sender: email // Добавляем отправителя для локального отображения
-      };
-      
-      ws.current.send(JSON.stringify(msgData));
-      setMessages((prev) => [...prev, msgData]); // Показываем у себя
-      setMessageText('');
-    }
-  };
-
-  // --- ОТОБРАЖЕНИЕ (UI) ---
-
-  // Экран 1: Ввод почты
-  if (step === 1) {
-    return (
-      <div style={styles.container}>
-        <h2>Вход в BOOM</h2>
-        <form onSubmit={handleSendCode} style={styles.form}>
-          <input
-            type="email"
-            placeholder="Твой Email (например: ivan@mail.ru)"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            style={styles.input}
-          />
-          <button type="submit" style={styles.button}>Получить код</button>
-          {error && <p style={styles.error}>{error}</p>}
-        </form>
-      </div>
-    );
-  }
-
-  // Экран 2: Ввод кода
-  if (step === 2) {
-    return (
-      <div style={styles.container}>
-        <h2>Проверка кода</h2>
-        <p>Код отправлен на: {email}</p>
-        <form onSubmit={handleVerifyCode} style={styles.form}>
-          <input
-            type="text"
-            placeholder="Код из письма"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            required
-            style={styles.input}
-          />
-          <input
-            type="text"
-            placeholder="Твой Никнейм (необязательно)"
-            value={nickname}
-            onChange={(e) => setNickname(e.target.value)}
-            style={styles.input}
-          />
-          <button type="submit" style={styles.button}>Войти</button>
-          {error && <p style={styles.error}>{error}</p>}
-          <button type="button" onClick={() => setStep(1)} style={styles.linkButton}>Назад</button>
-        </form>
-      </div>
-    );
-  }
-
-  // Экран 3: Чат
   return (
-    <div style={styles.chatContainer}>
-      <div style={styles.header}>
-        <h3>BOOM Messenger</h3>
-        <span>Твой аккаунт: {email}</span>
+    <div className="boom-app">
+      <div className="sidebar">
+        <div className="profile-bar">
+          <div className="avatar">{currentUser[0].toUpperCase()}</div>
+          <b>BOOM</b>
+        </div>
+        <div style={{padding:15}}><input className="input-box" style={{width:'100%', padding:8}} placeholder="Поиск (email)..." onChange={e=>setSearch(e.target.value)} /></div>
+        <div style={{flex:1, overflowY:'auto'}}>
+          {filtered.map(p => (
+            <div key={p} style={{padding:15, cursor:'pointer', borderBottom:'1px solid #eee', background: p === activeChat ? '#f0f2f5' : ''}} onClick={()=>setActiveChat(p)}>
+              <b>{p}</b>
+              <div style={{fontSize:12, color:'#888'}}>Сообщений: {messages.filter(m => m.sender === p || m.receiver === p).length}</div>
+            </div>
+          ))}
+          {search && !partners.includes(search) && <div style={{padding:15, color:'#764ba2', cursor:'pointer'}} onClick={()=>setActiveChat(search)}>Начать чат с {search}</div>}
+        </div>
       </div>
-
-      <div style={styles.chatBox}>
-        {messages.map((msg, index) => (
-          <div key={index} style={msg.sender === email ? styles.myMessage : styles.theirMessage}>
-            <strong>{msg.sender === email ? 'Ты' : msg.sender}: </strong>
-            <span>{msg.text}</span>
-          </div>
-        ))}
+      <div className="chat-area">
+        {activeChat ? (
+          <>
+            <div style={{padding:20, background:'white', borderBottom:'1px solid #eee'}}><b>{activeChat}</b></div>
+            <div className="messages">
+              {currentMsgs.map((m, i) => (
+                <div key={i} className={`msg ${m.sender === currentUser ? 'my' : 'their'}`}>
+                  {m.text}
+                  <div className="msg-footer">
+                    {m.time} {m.sender === currentUser && <span className="ticks">✓✓</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <form className="input-box" onSubmit={send}>
+              <input value={text} onChange={e=>setText(e.target.value)} placeholder="Сообщение..." />
+              <button style={{background:'none', border:'none', fontSize:24, cursor:'pointer'}}>➤</button>
+            </form>
+          </>
+        ) : <div style={{display:'flex', flex:1, alignItems:'center', justifyContent:'center', color:'#888'}}>Выберите чат</div>}
       </div>
-
-      <form onSubmit={handleSendMessage} style={styles.messageForm}>
-        <input
-          type="email"
-          placeholder="Email получателя"
-          value={receiverEmail}
-          onChange={(e) => setReceiverEmail(e.target.value)}
-          required
-          style={styles.inputSmall}
-        />
-        <input
-          type="text"
-          placeholder="Текст сообщения"
-          value={messageText}
-          onChange={(e) => setMessageText(e.target.value)}
-          required
-          style={styles.inputMain}
-        />
-        <button type="submit" style={styles.buttonSmall}>Отправить</button>
-      </form>
     </div>
   );
 }
-
-// Базовые стили (можешь заменить на свои CSS/Tailwind классы)
-const styles = {
-  container: { maxWidth: '400px', margin: '50px auto', textAlign: 'center', fontFamily: 'sans-serif' },
-  form: { display: 'flex', flexDirection: 'column', gap: '15px' },
-  input: { padding: '10px', fontSize: '16px', borderRadius: '5px', border: '1px solid #ccc' },
-  button: { padding: '10px', fontSize: '16px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' },
-  linkButton: { background: 'none', border: 'none', color: '#007bff', cursor: 'pointer', textDecoration: 'underline' },
-  error: { color: 'red', margin: 0 },
-  chatContainer: { maxWidth: '600px', margin: '20px auto', border: '1px solid #ccc', borderRadius: '8px', display: 'flex', flexDirection: 'column', height: '80vh', fontFamily: 'sans-serif' },
-  header: { padding: '15px', backgroundColor: '#f1f1f1', borderBottom: '1px solid #ccc', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  chatBox: { flex: 1, padding: '15px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' },
-  myMessage: { alignSelf: 'flex-end', backgroundColor: '#dcf8c6', padding: '10px', borderRadius: '10px', maxWidth: '70%' },
-  theirMessage: { alignSelf: 'flex-start', backgroundColor: '#fff', border: '1px solid #eee', padding: '10px', borderRadius: '10px', maxWidth: '70%' },
-  messageForm: { display: 'flex', padding: '10px', borderTop: '1px solid #ccc', gap: '10px', backgroundColor: '#fafafa' },
-  inputSmall: { flex: 1, padding: '10px', border: '1px solid #ccc', borderRadius: '5px' },
-  inputMain: { flex: 3, padding: '10px', border: '1px solid #ccc', borderRadius: '5px' },
-  buttonSmall: { padding: '10px 20px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }
-};

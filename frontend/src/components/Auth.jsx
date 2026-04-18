@@ -1,113 +1,73 @@
 import React, { useState } from 'react';
-
-// Твой новый сервер
-const API_BASE_URL = 'http://193.233.139.208:8000';
+const API = 'http://193.233.139.208:8000';
 
 export default function Auth({ onLogin }) {
+  const [isLogin, setIsLogin] = useState(true);
+  const [step, setStep] = useState(1);
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [nickname, setNickname] = useState('');
-  const [step, setStep] = useState(1); // 1 - ввод почты, 2 - ввод кода
-  const [error, setError] = useState('');
+  const [err, setErr] = useState('');
 
-  // 1. Отправка почты для получения кода
-  const handleSendCode = async (e) => {
+  const login = async (e) => {
     e.preventDefault();
-    setError('');
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/send-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email })
-      });
-
-      if (response.ok) {
-        setStep(2);
-      } else {
-        setError('Ошибка при отправке кода. Проверь почту.');
-      }
-    } catch (err) {
-      setError('Сервер недоступен. Проверь подключение.');
-    }
+    const res = await fetch(`${API}/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    if (res.ok) onLogin(email); else setErr('Ошибка входа');
   };
 
-  // 2. Проверка кода и вход
-  const handleVerifyCode = async (e) => {
+  const regStep1 = async (e) => {
     e.preventDefault();
-    setError('');
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email, code: code, nickname: nickname })
-      });
-
-      if (response.ok) {
-        // Если всё ок, передаем email в главный компонент (App.jsx), чтобы открыть Chat
-        onLogin(email); 
-      } else {
-        setError('Неверный код.');
-      }
-    } catch (err) {
-      setError('Ошибка соединения с сервером.');
-    }
+    const res = await fetch(`${API}/auth/register-step1`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    if (res.ok) setStep(2); else setErr('Ошибка отправки кода');
   };
 
-  // --- ОТОБРАЖЕНИЕ ---
-
-  if (step === 1) {
-    return (
-      <div style={styles.container}>
-        <h2>Вход в BOOM</h2>
-        <form onSubmit={handleSendCode} style={styles.form}>
-          <input
-            type="email"
-            placeholder="Твой Email (например: ivan@mail.ru)"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            style={styles.input}
-          />
-          <button type="submit" style={styles.button}>Получить код</button>
-          {error && <p style={styles.error}>{error}</p>}
-        </form>
-      </div>
-    );
-  }
+  const regStep2 = async (e) => {
+    e.preventDefault();
+    const res = await fetch(`${API}/auth/confirm-registration`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, code, nickname, password })
+    });
+    if (res.ok) onLogin(email); else setErr('Ошибка регистрации');
+  };
 
   return (
-    <div style={styles.container}>
-      <h2>Проверка кода</h2>
-      <p>Код отправлен на: {email}</p>
-      <form onSubmit={handleVerifyCode} style={styles.form}>
-        <input
-          type="text"
-          placeholder="Код из письма"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          required
-          style={styles.input}
-        />
-        <input
-          type="text"
-          placeholder="Твой Никнейм (необязательно)"
-          value={nickname}
-          onChange={(e) => setNickname(e.target.value)}
-          style={styles.input}
-        />
-        <button type="submit" style={styles.button}>Войти</button>
-        {error && <p style={styles.error}>{error}</p>}
-        <button type="button" onClick={() => setStep(1)} style={styles.linkButton}>Назад</button>
-      </form>
+    <div className="auth-container">
+      <div className="auth-card">
+        <h1 className="auth-logo">BOOM</h1>
+        <div className="auth-tabs">
+          <button className={isLogin ? 'active' : ''} onClick={() => setIsLogin(true)}>Вход</button>
+          <button className={!isLogin ? 'active' : ''} onClick={() => {setIsLogin(false); setStep(1);}}>Регистрация</button>
+        </div>
+        {isLogin ? (
+          <form className="auth-form" onSubmit={login}>
+            <input type="email" placeholder="Email" onChange={e=>setEmail(e.target.value)} required />
+            <input type="password" placeholder="Пароль" onChange={e=>setPassword(e.target.value)} required />
+            <button>Войти</button>
+          </form>
+        ) : (
+          step === 1 ? (
+            <form className="auth-form" onSubmit={regStep1}>
+              <input type="email" placeholder="Email для кода" onChange={e=>setEmail(e.target.value)} required />
+              <button>Получить код</button>
+            </form>
+          ) : (
+            <form className="auth-form" onSubmit={regStep2}>
+              <input type="text" placeholder="Код" onChange={e=>setCode(e.target.value)} required />
+              <input type="text" placeholder="Никнейм" onChange={e=>setNickname(e.target.value)} required />
+              <input type="password" placeholder="Пароль" onChange={e=>setPassword(e.target.value)} required />
+              <button>Создать аккаунт</button>
+            </form>
+          )
+        )}
+        {err && <p style={{color:'red', marginTop:10}}>{err}</p>}
+      </div>
     </div>
   );
 }
-
-const styles = {
-  container: { maxWidth: '400px', margin: '50px auto', textAlign: 'center', fontFamily: 'sans-serif' },
-  form: { display: 'flex', flexDirection: 'column', gap: '15px' },
-  input: { padding: '10px', fontSize: '16px', borderRadius: '5px', border: '1px solid #ccc' },
-  button: { padding: '10px', fontSize: '16px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' },
-  linkButton: { background: 'none', border: 'none', color: '#007bff', cursor: 'pointer', textDecoration: 'underline' },
-  error: { color: 'red', margin: 0 }
-};

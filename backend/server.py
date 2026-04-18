@@ -1,18 +1,13 @@
 import os
 import random
 import sqlite3
-import smtplib
-from email.mime.text import MIMEText
+import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv()
-
-# Ключи из .env
-SMTP_EMAIL = os.getenv("SMTP_EMAIL")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 
 app = FastAPI()
 
@@ -23,6 +18,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Твоя ссылка на Google Apps Script
+GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzJKbnQV2FEF1Z0r_zvO5Oc6KkIaHCKlatiVA3f-xJgD_NrLyPIfFqEjWrpo_TCHXcwJA/exec"
 
 # --- БАЗА ДАННЫХ ---
 def init_db():
@@ -38,22 +36,25 @@ def init_db():
 
 init_db()
 
-# --- ОТПРАВКА EMAIL ЧЕРЕЗ MAIL.RU ---
+# --- ОТПРАВКА КОДА ЧЕРЕЗ GOOGLE API ---
 def send_email_code(receiver_email: str, code: str):
-    msg = MIMEText(f"Твой код подтверждения в мессенджере BOOM: {code}")
-    msg['Subject'] = 'BOOM: Код входа'
-    msg['From'] = SMTP_EMAIL
-    msg['To'] = receiver_email
-
+    data = {
+        "to": receiver_email,
+        "code": code
+    }
+    
     try:
-        # Настройки специально для Mail.ru
-        server = smtplib.SMTP_SSL('smtp.mail.ru', 465) 
-        server.login(SMTP_EMAIL, SMTP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print(f"✅ Код {code} успешно отправлен на {receiver_email}")
+        # Google всегда делает редиректы, поэтому follow_redirects=True обязателен
+        with httpx.Client(follow_redirects=True) as client:
+            response = client.post(GOOGLE_SCRIPT_URL, json=data, timeout=10.0)
+            
+        if response.status_code == 200:
+            print(f"✅ Код {code} успешно отправлен через Google API на {receiver_email}")
+        else:
+            print(f"⚠️ Google API ответил ошибкой: {response.status_code} - {response.text}")
+            
     except Exception as e:
-        print(f"⚠️ Ошибка отправки почты: {e}")
+        print(f"⚠️ Ошибка при обращении к Google API: {e}")
 
 # --- МОДЕЛИ ДАННЫХ ---
 class AuthRequest(BaseModel):
@@ -66,19 +67,22 @@ class VerifyRequest(BaseModel):
 
 # --- ЭНДПОИНТЫ ---
 @app.post("/auth/send-code")
-async def send_code(req: AuthRequest):
+def send_code(req: AuthRequest):
     code = str(random.randint(1000, 9999))
     conn = sqlite3.connect("messenger.db")
     cursor = conn.cursor()
+    # Записываем код в базу
     cursor.execute("INSERT OR REPLACE INTO users (email, auth_code) VALUES (?, ?)", (req.email, code))
     conn.commit()
     conn.close()
     
+    # Отправляем через Google
     send_email_code(req.email, code)
+    
     return {"status": "code_sent"}
 
 @app.post("/auth/verify")
-async def verify_code(req: VerifyRequest):
+def verify_code(req: VerifyRequest):
     conn = sqlite3.connect("messenger.db")
     cursor = conn.cursor()
     cursor.execute("SELECT auth_code FROM users WHERE email = ?", (req.email,))
@@ -98,10 +102,10 @@ async def verify_code(req: VerifyRequest):
 @app.websocket("/ws/{email}")
 async def websocket_endpoint(websocket: WebSocket, email: str):
     await websocket.accept()
-    # Тут можно добавить логику хранения активных соединений, как в прошлых уроках
     try:
         while True:
-            data = await websocket.receive_json()
-            # Логика отправки сообщения
+            # Здесь будет логика обмена сообщениями
+            data = await websocket.receive_text()
+            await websocket.send_text(f"Message received: {data}")
     except WebSocketDisconnect:
-        pass
+        print(f"User {email} disconnected")

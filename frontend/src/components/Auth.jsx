@@ -1,146 +1,113 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
+
+// Твой новый сервер
+const API_BASE_URL = 'http://193.233.139.208:8000';
 
 export default function Auth({ onLogin }) {
-  const [step, setStep] = useState(1); // 1 - ввод телефона, 2 - ввод кода
-  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
-  const [message, setMessage] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [nickname, setNickname] = useState('');
+  const [step, setStep] = useState(1); // 1 - ввод почты, 2 - ввод кода
+  const [error, setError] = useState('');
 
-  // Шаг 1: Отправляем номер телефона на сервер
-  const handleRequestCode = async (e) => {
+  // 1. Отправка почты для получения кода
+  const handleSendCode = async (e) => {
     e.preventDefault();
-    if (phone.length < 5) {
-      setMessage('❌ Введите корректный номер');
-      return;
-    }
-    
-    setIsLoading(true);
-    setMessage('');
-    
+    setError('');
     try {
-      const response = await fetch('http://176.117.69.113:8000/auth/send-code', {
+      const response = await fetch(`${API_BASE_URL}/auth/send-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone })
+        body: JSON.stringify({ email: email })
       });
 
       if (response.ok) {
-        setStep(2); // Переключаем на экран ввода кода
+        setStep(2);
       } else {
-        setMessage('❌ Ошибка отправки кода');
+        setError('Ошибка при отправке кода. Проверь почту.');
       }
-    } catch (error) {
-      setMessage('❌ Сервер недоступен');
-    } finally {
-      setIsLoading(false);
+    } catch (err) {
+      setError('Сервер недоступен. Проверь подключение.');
     }
   };
 
-  // Шаг 2: Отправляем код подтверждения
+  // 2. Проверка кода и вход
   const handleVerifyCode = async (e) => {
     e.preventDefault();
-    setIsLoading(true);
-    setMessage('');
-
+    setError('');
     try {
-      const response = await fetch('http://176.117.69.113:8000/auth/verify-code', {
+      const response = await fetch(`${API_BASE_URL}/auth/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, code })
+        body: JSON.stringify({ email: email, code: code, nickname: nickname })
       });
 
-      const data = await response.json();
-
       if (response.ok) {
-        localStorage.setItem('token', data.access_token);
-        onLogin(data.access_token);
+        // Если всё ок, передаем email в главный компонент (App.jsx), чтобы открыть Chat
+        onLogin(email); 
       } else {
-        setMessage('❌ Неверный код подтверждения');
+        setError('Неверный код.');
       }
-    } catch (error) {
-      setMessage('❌ Ошибка соединения');
-    } finally {
-      setIsLoading(false);
+    } catch (err) {
+      setError('Ошибка соединения с сервером.');
     }
   };
 
-  // Цвета Boom
-  const theme = {
-    bgApp: '#0e0e12',
-    bgPanel: '#17171e',
-    accent: '#FF2A5F',
-    textMain: '#ffffff',
-    textMuted: '#7f7f8c',
-    inputBg: '#1d1d26'
-  };
+  // --- ОТОБРАЖЕНИЕ ---
+
+  if (step === 1) {
+    return (
+      <div style={styles.container}>
+        <h2>Вход в BOOM</h2>
+        <form onSubmit={handleSendCode} style={styles.form}>
+          <input
+            type="email"
+            placeholder="Твой Email (например: ivan@mail.ru)"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            style={styles.input}
+          />
+          <button type="submit" style={styles.button}>Получить код</button>
+          {error && <p style={styles.error}>{error}</p>}
+        </form>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', width: '100vw', backgroundColor: theme.bgApp, alignItems: 'center', justifyContent: 'center', fontFamily: "'Segoe UI', sans-serif" }}>
-      
-      <div style={{ backgroundColor: theme.bgPanel, padding: '40px', borderRadius: '24px', width: '350px', boxShadow: '0 20px 50px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        
-        {/* Логотип */}
-        <div style={{ width: '80px', height: '80px', borderRadius: '50%', backgroundColor: theme.inputBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '40px', marginBottom: '20px', boxShadow: `0 0 20px ${theme.accent}40` }}>
-          💥
-        </div>
-        
-        <h2 style={{ color: theme.textMain, margin: '0 0 10px 0', fontSize: '28px', fontWeight: '600' }}>BOOM</h2>
-        <p style={{ color: theme.textMuted, margin: '0 0 30px 0', textAlign: 'center', fontSize: '15px' }}>
-          {step === 1 ? 'Введите номер телефона для входа' : `Код отправлен на ${phone}`}
-        </p>
-
-        {/* Формы */}
-        {step === 1 ? (
-          <form onSubmit={handleRequestCode} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            <input 
-              type="tel" 
-              placeholder="+7 (999) 000-00-00" 
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              required
-              style={{ width: '100%', boxSizing: 'border-box', padding: '15px', borderRadius: '12px', border: '1px solid #24242f', backgroundColor: theme.inputBg, color: theme.textMain, fontSize: '16px', outline: 'none', textAlign: 'center', letterSpacing: '1px' }}
-            />
-            <button 
-              type="submit" 
-              disabled={isLoading}
-              style={{ padding: '15px', borderRadius: '12px', border: 'none', backgroundColor: theme.accent, color: 'white', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', transition: 'background 0.2s', opacity: isLoading ? 0.7 : 1 }}
-            >
-              {isLoading ? 'Отправка...' : 'Получить код'}
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={handleVerifyCode} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            <input 
-              type="text" 
-              placeholder="0000" 
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              required
-              maxLength={4}
-              style={{ width: '100%', boxSizing: 'border-box', padding: '15px', borderRadius: '12px', border: `1px solid ${theme.accent}`, backgroundColor: theme.inputBg, color: theme.textMain, fontSize: '24px', outline: 'none', textAlign: 'center', letterSpacing: '10px', fontWeight: 'bold' }}
-            />
-            <button 
-              type="submit" 
-              disabled={isLoading}
-              style={{ padding: '15px', borderRadius: '12px', border: 'none', backgroundColor: theme.accent, color: 'white', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', transition: 'background 0.2s', opacity: isLoading ? 0.7 : 1 }}
-            >
-              {isLoading ? 'Проверка...' : 'Войти'}
-            </button>
-            
-            <p 
-              onClick={() => {setStep(1); setCode('');}} 
-              style={{ color: theme.textMuted, fontSize: '14px', textAlign: 'center', cursor: 'pointer', marginTop: '10px', textDecoration: 'underline' }}
-            >
-              Изменить номер
-            </p>
-          </form>
-        )}
-
-        {/* Вывод ошибок */}
-        {message && <div style={{ marginTop: '20px', color: '#ff4444', fontSize: '14px', backgroundColor: '#ff444420', padding: '10px 15px', borderRadius: '8px', width: '100%', boxSizing: 'border-box', textAlign: 'center' }}>{message}</div>}
-        
-      </div>
+    <div style={styles.container}>
+      <h2>Проверка кода</h2>
+      <p>Код отправлен на: {email}</p>
+      <form onSubmit={handleVerifyCode} style={styles.form}>
+        <input
+          type="text"
+          placeholder="Код из письма"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          required
+          style={styles.input}
+        />
+        <input
+          type="text"
+          placeholder="Твой Никнейм (необязательно)"
+          value={nickname}
+          onChange={(e) => setNickname(e.target.value)}
+          style={styles.input}
+        />
+        <button type="submit" style={styles.button}>Войти</button>
+        {error && <p style={styles.error}>{error}</p>}
+        <button type="button" onClick={() => setStep(1)} style={styles.linkButton}>Назад</button>
+      </form>
     </div>
   );
 }
+
+const styles = {
+  container: { maxWidth: '400px', margin: '50px auto', textAlign: 'center', fontFamily: 'sans-serif' },
+  form: { display: 'flex', flexDirection: 'column', gap: '15px' },
+  input: { padding: '10px', fontSize: '16px', borderRadius: '5px', border: '1px solid #ccc' },
+  button: { padding: '10px', fontSize: '16px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' },
+  linkButton: { background: 'none', border: 'none', color: '#007bff', cursor: 'pointer', textDecoration: 'underline' },
+  error: { color: 'red', margin: 0 }
+};

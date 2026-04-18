@@ -1,22 +1,21 @@
 import os
 import random
 import sqlite3
-import httpx
-from typing import List, Dict
+import smtplib
+from email.mime.text import MIMEText
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-# Загружаем переменные из файла .env
 load_dotenv()
 
-EXOLVE_API_KEY = os.getenv("EXOLVE_API_KEY")
-EXOLVE_NUMBER = os.getenv("EXOLVE_NUMBER")
+# Ключи из .env
+SMTP_EMAIL = os.getenv("SMTP_EMAIL")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 
 app = FastAPI()
 
-# Настройка CORS для десктопного приложения
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,8 +28,9 @@ app.add_middleware(
 def init_db():
     conn = sqlite3.connect("messenger.db")
     cursor = conn.cursor()
+    # Используем email как главный ключ
     cursor.execute('''CREATE TABLE IF NOT EXISTS users 
-                      (phone TEXT PRIMARY KEY, nickname TEXT, auth_code TEXT)''')
+                      (email TEXT PRIMARY KEY, nickname TEXT, auth_code TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS messages 
                       (sender TEXT, receiver TEXT, text TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
@@ -38,116 +38,70 @@ def init_db():
 
 init_db()
 
-# --- ЛОГИКА СМС (EXOLVE) ---
-async def send_sms_exolve(phone: str, code: str):
-    url = "https://api.exolve.ru/messaging/v1/sms/send"
-    headers = {
-        "Authorization": f"Bearer {EXOLVE_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "number": EXOLVE_NUMBER,
-        "destination": phone,
-        "text": f"Ваш код подтверждения BOOM: {code}"
-    }
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(url, json=payload, headers=headers)
-            if response.status_code == 200:
-                print(f"✅ СМС успешно отправлено на {phone}")
-            else:
-                print(f"❌ Ошибка Exolve: {response.text}")
-        except Exception as e:
-            print(f"⚠️ Ошибка сети при отправке СМС: {e}")
+# --- ОТПРАВКА EMAIL ЧЕРЕЗ MAIL.RU ---
+def send_email_code(receiver_email: str, code: str):
+    msg = MIMEText(f"Твой код подтверждения в мессенджере BOOM: {code}")
+    msg['Subject'] = 'BOOM: Код входа'
+    msg['From'] = SMTP_EMAIL
+    msg['To'] = receiver_email
+
+    try:
+        # Настройки специально для Mail.ru
+        server = smtplib.SMTP_SSL('smtp.mail.ru', 465) 
+        server.login(SMTP_EMAIL, SMTP_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        print(f"✅ Код {code} успешно отправлен на {receiver_email}")
+    except Exception as e:
+        print(f"⚠️ Ошибка отправки почты: {e}")
 
 # --- МОДЕЛИ ДАННЫХ ---
 class AuthRequest(BaseModel):
-    phone: str
+    email: str
 
 class VerifyRequest(BaseModel):
-    phone: str
+    email: str
     code: str
     nickname: str = None
 
-# --- ЭНДПОИНТЫ АВТОРИЗАЦИИ ---
-@app.post("http://176.117.69.113:8000/auth/send-code")
+# --- ЭНДПОИНТЫ ---
+@app.post("/auth/send-code")
 async def send_code(req: AuthRequest):
     code = str(random.randint(1000, 9999))
     conn = sqlite3.connect("messenger.db")
     cursor = conn.cursor()
-    
-    # Сохраняем код в базу (создаем юзера, если его нет)
-    cursor.execute("INSERT OR REPLACE INTO users (phone, auth_code) VALUES (?, ?)", (req.phone, code))
+    cursor.execute("INSERT OR REPLACE INTO users (email, auth_code) VALUES (?, ?)", (req.email, code))
     conn.commit()
     conn.close()
     
-    # Отправляем реальное СМС
-    await send_sms_exolve(req.phone, code)
-    
+    send_email_code(req.email, code)
     return {"status": "code_sent"}
 
-@app.post("http://176.117.69.113:8000/auth/verify")
+@app.post("/auth/verify")
 async def verify_code(req: VerifyRequest):
     conn = sqlite3.connect("messenger.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT auth_code FROM users WHERE phone = ?", (req.phone,))
+    cursor.execute("SELECT auth_code FROM users WHERE email = ?", (req.email,))
     result = cursor.fetchone()
     
     if result and result[0] == req.code:
         if req.nickname:
-            cursor.execute("UPDATE users SET nickname = ? WHERE phone = ?", (req.nickname, req.phone))
+            cursor.execute("UPDATE users SET nickname = ? WHERE email = ?", (req.nickname, req.email))
         conn.commit()
         conn.close()
-        return {"status": "success", "phone": req.phone}
+        return {"status": "success", "email": req.email}
     
     conn.close()
     raise HTTPException(status_code=400, detail="Invalid code")
 
-# --- МЕНЕДЖЕР СОЕДИНЕНИЙ WEBSOCKET ---
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}
-
-    async def connect(self, phone: str, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections[phone] = websocket
-
-    def disconnect(self, phone: str):
-        if phone in self.active_connections:
-            del self.active_connections[phone]
-
-    async def send_personal_message(self, message: dict, receiver_phone: str):
-        if receiver_phone in self.active_connections:
-            await self.active_connections[receiver_phone].send_json(message)
-
-manager = ConnectionManager()
-
-@app.websocket("/ws/{phone}")
-async def websocket_endpoint(websocket: WebSocket, phone: str):
-    await manager.connect(phone, websocket)
+# --- WEBSOCKETS ---
+@app.websocket("/ws/{email}")
+async def websocket_endpoint(websocket: WebSocket, email: str):
+    await websocket.accept()
+    # Тут можно добавить логику хранения активных соединений, как в прошлых уроках
     try:
         while True:
             data = await websocket.receive_json()
-            # data формат: {"receiver": "...", "text": "..."}
-            
-            # Сохраняем в базу
-            conn = sqlite3.connect("messenger.db")
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO messages (sender, receiver, text) VALUES (?, ?, ?)",
-                           (phone, data['receiver'], data['text']))
-            conn.commit()
-            conn.close()
-            
-            # Пересылаем получателю
-            await manager.send_personal_message({
-                "sender": phone,
-                "text": data['text']
-            }, data['receiver'])
-            
+            # Логика отправки сообщения
     except WebSocketDisconnect:
-        manager.disconnect(phone)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+        pass

@@ -5,7 +5,7 @@ from database import Base
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
-    phone = Column(String, unique=True, index=True)     # НОВОЕ: Номер телефона (скрыт от всех)
+    email = Column(String, unique=True, index=True)     # НОВОЕ: Номер телефона (скрыт от всех)
     username = Column(String, unique=True, index=True)  # ЭТО ТЕПЕРЬ @НИКНЕЙМ (виден всем)
     hashed_password = Column(String)
 

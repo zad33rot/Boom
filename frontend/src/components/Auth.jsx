@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import '../index.css';
 
 const API = 'http://193.233.139.208:8000';
 

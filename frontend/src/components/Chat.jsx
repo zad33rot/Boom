@@ -20,16 +20,26 @@ export default function Chat({ currentUser, onLogout }) {
   }, [myEmail]);
 
   // 2. Живой поиск пользователей на сервере
+  // 2. Живой поиск пользователей на сервере (Безопасная версия)
   useEffect(() => {
     const delayDebounceFn = setTimeout(async () => {
       if (searchQuery.length > 1) {
-        const res = await fetch(`http://193.233.139.208:8000/users/search?q=${searchQuery}`);
-        const data = await res.json();
-        setSearchResults(data);
+        try {
+          const res = await fetch(`http://193.233.139.208:8000/users/search?q=${searchQuery}`);
+          if (res.ok) {
+            const data = await res.json();
+            // ЗАЩИТА: Проверяем, точно ли пришел список (массив)
+            setSearchResults(Array.isArray(data) ? data : []);
+          } else {
+            setSearchResults([]); // Если 404, просто обнуляем поиск
+          }
+        } catch (error) {
+          setSearchResults([]); // Если сервер упал, тоже обнуляем
+        }
       } else {
         setSearchResults([]);
       }
-    }, 300); // Задержка 300мс, чтобы не спамить сервер
+    }, 300);
     return () => clearTimeout(delayDebounceFn);
   }, [searchQuery]);
 

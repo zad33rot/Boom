@@ -6,9 +6,7 @@ from email.mime.text import MIMEText
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-
-from models import EmailReq, CodeReq, FinalRegReq, LoginReq
-from database import init_db
+from pydantic import BaseModel
 
 load_dotenv()
 app = FastAPI()
@@ -18,8 +16,13 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 SMTP_EMAIL = os.getenv("SMTP_EMAIL")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 
-init_db()
+# === МОДЕЛИ ===
+class EmailReq(BaseModel): email: str
+class CodeReq(BaseModel): email: str; code: str
+class FinalRegReq(BaseModel): email: str; code: str; username: str; nickname: str; password: str
+class LoginReq(BaseModel): email: str; password: str
 
+# === ПОЧТА ===
 def send_mail(to, code):
     msg = MIMEText(f"Твой код подтверждения BOOM: {code}")
     msg['Subject'] = 'Вход в BOOM'
@@ -31,9 +34,9 @@ def send_mail(to, code):
         s.send_message(msg)
         s.quit()
         return True
-    except: 
-        return False
+    except: return False
 
+# === АВТОРИЗАЦИЯ ===
 @app.post("/auth/start")
 def start_auth(req: EmailReq):
     conn = sqlite3.connect("messenger.db")
@@ -41,8 +44,7 @@ def start_auth(req: EmailReq):
     cur.execute("SELECT password FROM users WHERE email = ?", (req.email,))
     user = cur.fetchone()
     
-    # Если юзер уже есть в базе — отправляем его на страницу логина
-    if user and user[0]:
+    if user and user[0]: 
         return {"action": "login", "message": "Email найден, введите пароль"}
     
     code = str(random.randint(1000, 9999))
@@ -68,8 +70,6 @@ def verify_code(req: CodeReq):
 def finalize(req: FinalRegReq):
     conn = sqlite3.connect("messenger.db")
     cur = conn.cursor()
-    
-    # ИСПРАВЛЕНИЕ: Исключаем нашу собственную почту из проверки!
     cur.execute("SELECT email FROM users WHERE username = ? AND email != ?", (req.username, req.email))
     if cur.fetchone(): 
         conn.close()
@@ -77,7 +77,6 @@ def finalize(req: FinalRegReq):
     
     colors = ["#FF5733", "#33FF57", "#3357FF", "#F333FF", "#FF33A8", "#33FFF5"]
     avatar = random.choice(colors)
-    
     cur.execute("UPDATE users SET username=?, nickname=?, password=?, avatar_color=?, auth_code=NULL WHERE email=?",
                 (req.username, req.nickname, req.password, avatar, req.email))
     conn.commit()
@@ -91,18 +90,16 @@ def login(req: LoginReq):
     cur.execute("SELECT password, username, nickname, avatar_color FROM users WHERE email = ?", (req.email,))
     res = cur.fetchone()
     conn.close()
-    
     if res and res[0] == req.password:
         return {"status": "ok", "username": res[1], "nickname": res[2], "avatar": res[3], "email": req.email}
     raise HTTPException(status_code=401, detail="Неверный пароль")
 
-# Добавь этот эндпоинт перед WebSocket
+# === ПОИСК ПОЛЬЗОВАТЕЛЕЙ (Из-за этого была ошибка 404!) ===
 @app.get("/users/search")
 def search_users(q: str):
-    if len(q) < 2: return [] # Начинаем искать от 2-х символов
+    if len(q) < 2: return []
     conn = sqlite3.connect("messenger.db")
     cur = conn.cursor()
-    # Ищем по username или nickname, исключая пустые профили
     search_query = f"%{q}%"
     cur.execute("""
         SELECT username, nickname, avatar_color, email 
@@ -112,12 +109,9 @@ def search_users(q: str):
     """, (search_query, search_query))
     rows = cur.fetchall()
     conn.close()
-    
-    return [
-        {"username": r[0], "nickname": r[1], "avatar": r[2], "email": r[3]} 
-        for r in rows
-    ]
+    return [{"username": r[0], "nickname": r[1], "avatar": r[2], "email": r[3]} for r in rows]
 
+# === ВЕБСОКЕТЫ (ЧАТ) ===
 active_connections = {}
 
 @app.websocket("/ws/{email}")
@@ -129,7 +123,6 @@ async def websocket_endpoint(websocket: WebSocket, email: str):
             data = await websocket.receive_json()
             receiver = data.get("receiver")
             
-            # Сохраняем сообщение
             conn = sqlite3.connect("messenger.db")
             cur = conn.cursor()
             cur.execute("INSERT INTO messages (sender_email, receiver_email, text) VALUES (?, ?, ?)",
@@ -137,12 +130,9 @@ async def websocket_endpoint(websocket: WebSocket, email: str):
             conn.commit()
             conn.close()
 
-            # Отправляем получателю
             if receiver in active_connections:
                 await active_connections[receiver].send_json({
-                    "sender": email, 
-                    "text": data.get("text"), 
-                    "time": data.get("time")
+                    "sender": email, "text": data.get("text"), "time": data.get("time")
                 })
     except WebSocketDisconnect:
         if email in active_connections: 

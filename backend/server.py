@@ -69,9 +69,10 @@ def finalize(req: FinalRegReq):
     conn = sqlite3.connect("messenger.db")
     cur = conn.cursor()
     
-    # Проверка уникальности юзернейма
-    cur.execute("SELECT email FROM users WHERE username = ?", (req.username,))
+    # ИСПРАВЛЕНИЕ: Исключаем нашу собственную почту из проверки!
+    cur.execute("SELECT email FROM users WHERE username = ? AND email != ?", (req.username, req.email))
     if cur.fetchone(): 
+        conn.close()
         raise HTTPException(status_code=400, detail="Этот @username уже занят!")
     
     colors = ["#FF5733", "#33FF57", "#3357FF", "#F333FF", "#FF33A8", "#33FFF5"]

@@ -2,15 +2,19 @@ import React, { useState } from 'react';
 import Auth from './components/Auth';
 import Chat from './components/Chat';
 
-export default function App() {
-  // Храним email пользователя. Если он пустой — показываем Auth. Если заполнен — Chat.
-  const [userEmail, setUserEmail] = useState(null);
+function App() {
+  const [currentUser, setCurrentUser] = useState(null);
 
-  if (!userEmail) {
-    // Передаем функцию setUserEmail в Auth.jsx
-    return <Auth onLogin={(email) => setUserEmail(email)} />;
-  }
-
-  // Передаем email в Chat.jsx, чтобы он знал, к кому подключать сокеты
-  return <Chat currentUser={userEmail} />;
+  return (
+    <div>
+      {currentUser ? (
+        // ВАЖНО: передаем onLogout, чтобы кнопка стирала юзера и возвращала на экран входа
+        <Chat currentUser={currentUser} onLogout={() => setCurrentUser(null)} />
+      ) : (
+        <Auth onLogin={(email) => setCurrentUser(email)} />
+      )}
+    </div>
+  );
 }
+
+export default App;

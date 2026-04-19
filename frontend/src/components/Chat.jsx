@@ -6,6 +6,7 @@ export default function Chat({ currentUser }) {
   const [search, setSearch] = useState('');
   const [activeChat, setActiveChat] = useState(null);
   const ws = useRef(null);
+  const scrollRef = useRef(null);
 
   useEffect(() => {
     ws.current = new WebSocket(`ws://193.233.139.208:8000/ws/${currentUser}`);
@@ -13,43 +14,68 @@ export default function Chat({ currentUser }) {
     return () => ws.current.close();
   }, [currentUser]);
 
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
   const send = (e) => {
     e.preventDefault();
-    if (!text || !activeChat) return;
-    const msg = { sender: currentUser, receiver: activeChat, text, time: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) };
+    if (!text.trim() || !activeChat) return;
+    const msg = { 
+      sender: currentUser, 
+      receiver: activeChat, 
+      text, 
+      time: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) 
+    };
     ws.current.send(JSON.stringify(msg));
     setMessages(prev => [...prev, msg]);
     setText('');
   };
 
+  // Ищем уникальных собеседников
   const partners = [...new Set(messages.map(m => m.sender === currentUser ? m.receiver : m.sender))];
-  const filtered = partners.filter(p => p.includes(search));
-  const currentMsgs = messages.filter(m => (m.sender === currentUser && m.receiver === activeChat) || (m.sender === activeChat && m.receiver === currentUser));
+  const filtered = partners.filter(p => p.toLowerCase().includes(search.toLowerCase()));
+  const chatMsgs = messages.filter(m => (m.sender === currentUser && m.receiver === activeChat) || (m.sender === activeChat && m.receiver === currentUser));
 
   return (
     <div className="boom-app">
+      {/* Левая панель */}
       <div className="sidebar">
         <div className="profile-bar">
+          {/* Бургер-меню (заготовка для профиля) */}
+          <div style={{cursor: 'pointer', fontSize: 24, marginRight: 10}}>☰</div>
           <div className="avatar">{currentUser[0].toUpperCase()}</div>
-          <b>BOOM</b>
+          <div style={{fontWeight: 'bold', fontSize: 18}}>BOOM</div>
         </div>
-        <div style={{padding:15}}><input className="input-box" style={{width:'100%', padding:8}} placeholder="Поиск (email)..." onChange={e=>setSearch(e.target.value)} /></div>
+        
+        <div className="search-box">
+          <input placeholder="Поиск (почта)..." onChange={e=>setSearch(e.target.value)} />
+        </div>
+        
         <div style={{flex:1, overflowY:'auto'}}>
           {filtered.map(p => (
-            <div key={p} style={{padding:15, cursor:'pointer', borderBottom:'1px solid #eee', background: p === activeChat ? '#f0f2f5' : ''}} onClick={()=>setActiveChat(p)}>
-              <b>{p}</b>
-              <div style={{fontSize:12, color:'#888'}}>Сообщений: {messages.filter(m => m.sender === p || m.receiver === p).length}</div>
+            <div key={p} className="chat-item" style={{background: p === activeChat ? '#e3f2fd' : ''}} onClick={()=>setActiveChat(p)}>
+              <div style={{fontWeight:'bold', color: '#333'}}>{p.split('@')[0]}</div>
+              <div style={{fontSize:13, color:'#888', marginTop: 4}}>Нажмите, чтобы открыть чат</div>
             </div>
           ))}
-          {search && !partners.includes(search) && <div style={{padding:15, color:'#764ba2', cursor:'pointer'}} onClick={()=>setActiveChat(search)}>Начать чат с {search}</div>}
+          {/* Если ищем кого-то нового */}
+          {search && !partners.includes(search) && (
+            <div className="chat-item" style={{color:'var(--primary)'}} onClick={()=>{setActiveChat(search); setSearch('');}}>
+              Начать чат с <b>{search}</b>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Правая панель (Чат) */}
       <div className="chat-area">
         {activeChat ? (
           <>
-            <div style={{padding:20, background:'white', borderBottom:'1px solid #eee'}}><b>{activeChat}</b></div>
+            <div style={{padding:'20px', background:'white', borderBottom:'1px solid #eee', fontWeight: 'bold'}}>
+              {activeChat}
+            </div>
+            
             <div className="messages">
-              {currentMsgs.map((m, i) => (
+              {chatMsgs.map((m, i) => (
                 <div key={i} className={`msg ${m.sender === currentUser ? 'my' : 'their'}`}>
                   {m.text}
                   <div className="msg-footer">
@@ -57,13 +83,19 @@ export default function Chat({ currentUser }) {
                   </div>
                 </div>
               ))}
+              <div ref={scrollRef} />
             </div>
-            <form className="input-box" onSubmit={send}>
-              <input value={text} onChange={e=>setText(e.target.value)} placeholder="Сообщение..." />
-              <button style={{background:'none', border:'none', fontSize:24, cursor:'pointer'}}>➤</button>
+            
+            <form className="input-area" onSubmit={send}>
+              <input value={text} onChange={e=>setText(e.target.value)} placeholder="Написать сообщение..." />
+              <button className="send-btn">➤</button>
             </form>
           </>
-        ) : <div style={{display:'flex', flex:1, alignItems:'center', justifyContent:'center', color:'#888'}}>Выберите чат</div>}
+        ) : (
+          <div style={{flex:1, display:'flex', alignItems:'center', justifyContent:'center', color:'#888', fontSize: 16}}>
+            Выберите чат, чтобы начать общение
+          </div>
+        )}
       </div>
     </div>
   );

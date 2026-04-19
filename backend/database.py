@@ -4,12 +4,14 @@ def init_db():
     conn = sqlite3.connect("messenger.db")
     cursor = conn.cursor()
     
-    # Таблица пользователей: email - главный ключ
+    # Таблица пользователей (username теперь УНИКАЛЬНЫЙ)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             email TEXT PRIMARY KEY,
+            username TEXT UNIQUE,
             nickname TEXT,
             password TEXT,
+            avatar_color TEXT,
             auth_code TEXT
         )
     ''')
@@ -18,8 +20,8 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender TEXT,
-            receiver TEXT,
+            sender_email TEXT,
+            receiver_email TEXT,
             text TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )

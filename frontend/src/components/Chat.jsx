@@ -173,7 +173,27 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
             const user = typeof item === 'string' ? (knownUsers[item] || {email: item, nickname: item.split('@')[0], avatar: '#333'}) : item;
             const isOnline = onlineUsers.has(user.email);
             const isTyping = typingUsers[user.email];
+            
+            // Фильтруем все сообщения с этим пользователем
+            const userMessages = messages.filter(m => (m.sender === user.email && m.receiver === myEmail) || (m.sender === myEmail && m.receiver === user.email));
+            // Берем самое последнее сообщение
+            const lastMsg = userMessages.length > 0 ? userMessages[userMessages.length - 1] : null;
+            
+            // Считаем непрочитанные
             const unreadCount = messages.filter(m => m.sender === user.email && m.receiver === myEmail && !m.read).length;
+
+            // ЛОГИКА ДЛЯ ПОДЗАГОЛОВКА: Печатает -> Последнее сообщение -> Статус
+            let subContent;
+            if (isTyping) {
+              subContent = <span style={{color: 'var(--primary)', fontWeight: 'bold'}}>печатает...</span>;
+            } else if (lastMsg) {
+              const prefix = lastMsg.sender === myEmail ? 'Вы: ' : '';
+              // Обрезаем длинные сообщения
+              const text = lastMsg.text.length > 25 ? lastMsg.text.substring(0, 25) + '...' : lastMsg.text;
+              subContent = <span>{prefix}{text}</span>;
+            } else {
+              subContent = isOnline ? 'в сети' : 'был(а) недавно';
+            }
 
             return (
               <div key={user.email} className={`chat-item ${activeChat?.email === user.email ? 'active' : ''}`} onClick={() => setActiveChat(user)}>
@@ -184,7 +204,7 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
                 <div className="chat-info">
                   <div className="name">{user.nickname}</div>
                   <div className="sub">
-                    {isTyping ? <span style={{color: 'var(--primary)', fontWeight: 'bold'}}>печатает...</span> : (isOnline ? 'в сети' : 'был(а) недавно')}
+                    {subContent}
                   </div>
                 </div>
                 {unreadCount > 0 && <div className="unread-badge">{unreadCount}</div>}

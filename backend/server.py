@@ -105,6 +105,40 @@ def get_messages(email: str):
     conn.close()
     return {"messages": msgs, "users": list(users.values())}
 
+# === ПРОФИЛЬ И ПОИСК ===
+@app.post("/users/update")
+async def update_profile(req: ProfileUpdateReq):
+    conn = sqlite3.connect("messenger.db"); cur = conn.cursor()
+    cur.execute("SELECT email FROM users WHERE username = ? AND email != ?", (req.username, req.email))
+    if cur.fetchone(): conn.close(); raise HTTPException(status_code=400, detail="Юзернейм уже занят!")
+    cur.execute("UPDATE users SET username=?, nickname=? WHERE email=?", (req.username, req.nickname, req.email))
+    conn.commit()
+    cur.execute("SELECT password, username, nickname, avatar_color FROM users WHERE email = ?", (req.email,))
+    res = cur.fetchone(); conn.close()
+    
+    updated_user = {"email": req.email, "username": res[1], "nickname": res[2], "avatar": res[3]}
+
+    for conn_ws in list(active_connections.values()):
+        try:
+            await conn_ws.send_json({"type": "profile_update", "user": updated_user})
+        except: pass
+
+    return {"status": "ok", **updated_user}
+
+@app.get("/users/search")
+def search_users(q: str):
+    conn = sqlite3.connect("messenger.db"); cur = conn.cursor()
+    cur.execute("SELECT username, nickname, avatar_color, email FROM users WHERE (username LIKE ? OR nickname LIKE ?) AND password IS NOT NULL", (f"%{q}%", f"%{q}%"))
+    rows = cur.fetchall(); conn.close()
+    return [{"username": r[0], "nickname": r[1], "avatar": r[2], "email": r[3]} for r in rows]
+
+@app.post("/messages/read")
+def mark_as_read(req: ReadReq):
+    conn = sqlite3.connect("messenger.db"); cur = conn.cursor()
+    cur.execute("UPDATE messages SET is_read = 1 WHERE sender_email = ? AND receiver_email = ?", (req.chat_with, req.my_email))
+    conn.commit(); conn.close()
+    return {"status": "ok"}
+
 # === ВЕБСОКЕТЫ (ОТПРАВКА) ===
 active_connections = {}
 

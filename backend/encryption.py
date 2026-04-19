@@ -1,15 +1,25 @@
+import os
+from dotenv import load_dotenv
 from cryptography.fernet import Fernet
-
-# ВАЖНО: В реальных проектах этот ключ прячут, но мы пока оставим тут
-SECRET_KEY = b'os.getenv("SECRET_KEY")'
+load_dotenv()
 
 # Создаем объект шифровальщика
-cipher = Fernet(SECRET_KEY)
+raw_key = os.getenv("SECRET_KEY")
+
+if not raw_key:
+    raise ValueError("SECRET_KEY не найден в .env файле!")
+
+SECRET_KEY = raw_key.strip().encode()
+
+# Создаем объект шифровальщика
+try:
+    cipher = Fernet(SECRET_KEY)
+except Exception as e:
+    print(f"Ошибка ключа шифрования: {e}")
+    raise
 
 def encrypt_msg(text: str) -> str:
-    # Превращаем текст в байты, шифруем и возвращаем как обычную строку
     return cipher.encrypt(text.encode()).decode()
 
 def decrypt_msg(encrypted_text: str) -> str:
-    # Берем зашифрованную строку и расшифровываем обратно в текст
     return cipher.decrypt(encrypted_text.encode()).decode()

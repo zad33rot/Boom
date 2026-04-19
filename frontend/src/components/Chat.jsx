@@ -126,8 +126,8 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
 
   const dialogs = [...new Set(messages.map(m => m.sender === myEmail ? m.receiver : m.sender))];
 
-  return (
-    <div className="boom-app">
+return (
+    <div className={`boom-app ${activeChat ? 'chat-active' : ''}`}>
       {isSettingsOpen && (
         <div className="modal-overlay">
           <div className="modal">

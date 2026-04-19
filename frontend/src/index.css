@@ -106,3 +106,35 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-dark); color: whit
 .typing-indicator .dot:nth-child(1) { animation-delay: -0.32s; }
 .typing-indicator .dot:nth-child(2) { animation-delay: -0.16s; }
 @keyframes typing { 0%, 80%, 100% { transform: scale(0.5); opacity: 0.5; } 40% { transform: scale(1); opacity: 1; } }
+
+/* === МОБИЛЬНАЯ АДАПТАЦИЯ === */
+@media (max-width: 768px) {
+  /* Изначально боковая панель занимает весь экран */
+  .sidebar {
+    width: 100%;
+    border-right: none;
+  }
+  
+  /* Изначально сам чат спрятан */
+  .main-chat {
+    display: none; 
+    width: 100%;
+  }
+
+  /* Магия: если чат выбран (появился класс chat-active) */
+  .boom-app.chat-active .sidebar {
+    display: none; /* Прячем список диалогов */
+  }
+  
+  .boom-app.chat-active .main-chat {
+    display: flex; /* Показываем переписку на весь экран */
+  }
+
+  /* Делаем кнопку "назад" чуть заметнее на телефоне */
+  .chat-top .icon-btn {
+    display: block;
+    padding: 5px 10px;
+    background: var(--glass);
+    border-radius: 10px;
+  }
+}

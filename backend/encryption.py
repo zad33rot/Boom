@@ -1,7 +1,7 @@
 from cryptography.fernet import Fernet
 
 # ВАЖНО: В реальных проектах этот ключ прячут, но мы пока оставим тут
-SECRET_KEY = b'J7nh2hhwhLNVn7jfFGkz9qG2TookjztnHZvyt9715Dg='
+SECRET_KEY = b'os.getenv("SECRET_KEY")'
 
 # Создаем объект шифровальщика
 cipher = Fernet(SECRET_KEY)

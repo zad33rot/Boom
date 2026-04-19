@@ -24,7 +24,7 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
   const myEmail = currentUser.email;
 
   useEffect(() => {
-    fetch(`http://193.233.139.208:8000/messages/${myEmail}`)
+    fetch(`https://boom-chat.duckdns.org/messages/${myEmail}`)
       .then(res => res.json())
       .then(data => {
         setMessages(data.messages || []);
@@ -38,7 +38,7 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
   }, [myEmail]);
 
   useEffect(() => {
-    ws.current = new WebSocket(`ws://193.233.139.208:8000/ws/${myEmail}`);
+    ws.current = new WebSocket(`wss://https://boom-chat.duckdns.org/ws/${myEmail}`);
     ws.current.onmessage = (e) => {
       const data = JSON.parse(e.data);
       
@@ -71,7 +71,7 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
 
   useEffect(() => {
     if (activeChat) {
-      fetch('http://193.233.139.208:8000/messages/read', {
+      fetch('https://boom-chat.duckdns.org/messages/read', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ chat_with: activeChat.email, my_email: myEmail })
       });
@@ -84,7 +84,7 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
     const delay = setTimeout(async () => {
       if (searchQuery.length > 1) {
         try {
-          const res = await fetch(`http://193.233.139.208:8000/users/search?q=${searchQuery}`);
+          const res = await fetch(`https://boom-chat.duckdns.org/users/search?q=${searchQuery}`);
           if (res.ok) setSearchResults(await res.json());
         } catch {}
       } else setSearchResults([]);
@@ -112,7 +112,7 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
 
   const saveSettings = async () => {
     try {
-      const res = await fetch('http://193.233.139.208:8000/users/update', {
+      const res = await fetch('https://boom-chat.duckdns.org/users/update', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ email: myEmail, nickname: editNick, username: editUser })
       });

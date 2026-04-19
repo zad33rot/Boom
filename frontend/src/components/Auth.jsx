@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-const API = 'http://193.233.139.208:8000';
+const API = 'https://boom-chat.duckdns.org';
 
 export default function Auth({ onLogin }) {
   const [step, setStep] = useState('email'); 

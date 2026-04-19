@@ -113,3 +113,23 @@ body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg-dar
 .save-btn:hover { box-shadow: 0 5px 15px rgba(142, 45, 226, 0.4); }
 .cancel-btn { background: #333; color: white; }
 .cancel-btn:hover { background: #444; }
+/* Индикатор онлайн */
+.online-badge {
+  position: absolute; bottom: 0; right: 0;
+  width: 12px; height: 12px; background: #4caf50;
+  border-radius: 50%; border: 2px solid var(--sidebar-bg);
+}
+
+/* Счётчик непрочитанных */
+.unread-badge {
+  background: var(--accent); color: white;
+  min-width: 20px; height: 20px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: bold; padding: 0 6px;
+  margin-left: auto;
+}
+
+/* Галочки прочтения */
+.ticks {
+  margin-left: 5px; font-weight: bold; font-size: 12px;
+}

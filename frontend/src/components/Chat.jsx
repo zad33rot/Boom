@@ -38,7 +38,7 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
   }, [myEmail]);
 
   useEffect(() => {
-    ws.current = new WebSocket(`wss://https://boom-chat.duckdns.org/ws/${myEmail}`);
+    ws.current = new WebSocket(`wss://boom-chat.duckdns.org/ws/${myEmail}`);
     ws.current.onmessage = (e) => {
       const data = JSON.parse(e.data);
       
@@ -131,11 +131,11 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
       {isSettingsOpen && (
         <div className="modal-overlay">
           <div className="modal">
-            <h3>⚙️ Настройки профиля</h3>
+            <h3>Настройки профиля</h3>
             <div className="modal-body">
-              <label>Отображаемое имя</label>
+              <label>Имя</label>
               <input value={editNick} onChange={e=>setEditNick(e.target.value)} />
-              <label>@username (уникальный)</label>
+              <label>@username</label>
               <input value={editUser} onChange={e=>setEditUser(e.target.value)} />
             </div>
             <div className="modal-actions">

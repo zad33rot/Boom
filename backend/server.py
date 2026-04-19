@@ -7,7 +7,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from datetime import datetime
 
 load_dotenv()
 app = FastAPI()
@@ -34,7 +33,7 @@ def send_mail(to, code):
         return True
     except: return False
 
-# === АВТОРИЗАЦИЯ И ПОИСК (БЕЗ ИЗМЕНЕНИЙ) ===
+# === АВТОРИЗАЦИЯ ===
 @app.post("/auth/start")
 def start_auth(req: EmailReq):
     conn = sqlite3.connect("messenger.db"); cur = conn.cursor()
@@ -71,6 +70,18 @@ def login(req: LoginReq):
     if res and res[0] == req.password: return {"status": "ok", "username": res[1], "nickname": res[2], "avatar": res[3], "email": req.email}
     raise HTTPException(status_code=401)
 
+# === ОБНОВЛЕНИЕ ПРОФИЛЯ ===
+@app.post("/users/update")
+def update_profile(req: ProfileUpdateReq):
+    conn = sqlite3.connect("messenger.db"); cur = conn.cursor()
+    cur.execute("SELECT email FROM users WHERE username = ? AND email != ?", (req.username, req.email))
+    if cur.fetchone(): conn.close(); raise HTTPException(status_code=400, detail="Юзернейм уже занят!")
+    cur.execute("UPDATE users SET username=?, nickname=? WHERE email=?", (req.username, req.nickname, req.email))
+    conn.commit()
+    cur.execute("SELECT password, username, nickname, avatar_color FROM users WHERE email = ?", (req.email,))
+    res = cur.fetchone(); conn.close()
+    return {"status": "ok", "username": res[1], "nickname": res[2], "avatar": res[3], "email": req.email}
+
 @app.get("/users/search")
 def search_users(q: str):
     conn = sqlite3.connect("messenger.db"); cur = conn.cursor()
@@ -79,15 +90,11 @@ def search_users(q: str):
     return [{"username": r[0], "nickname": r[1], "avatar": r[2], "email": r[3]} for r in rows]
 
 # === ЧАТ И СООБЩЕНИЯ ===
-
 @app.get("/messages/{email}")
 def get_messages(email: str):
     conn = sqlite3.connect("messenger.db"); cur = conn.cursor()
-    # Достаем сообщения и статус прочтения
     cur.execute("SELECT sender_email, receiver_email, text, timestamp, is_read FROM messages WHERE sender_email = ? OR receiver_email = ? ORDER BY timestamp ASC", (email, email))
     msgs = [{"sender": r[0], "receiver": r[1], "text": r[2], "time": r[3][11:16], "read": bool(r[4])} for r in cur.fetchall()]
-    
-    # Достаем всех участников переписок, чтобы имена не слетали на почту
     cur.execute("SELECT email, username, nickname, avatar_color FROM users")
     users = {u[0]: {"email": u[0], "username": u[1], "nickname": u[2], "avatar": u[3]} for u in cur.fetchall()}
     conn.close()
@@ -101,10 +108,9 @@ def mark_as_read(req: ReadReq):
     return {"status": "ok"}
 
 # === ВЕБСОКЕТЫ СО СТАТУСАМИ ===
-active_connections = {} # {email: websocket}
+active_connections = {}
 
 async def broadcast_status(email, status):
-    # Рассылаем всем, что юзер зашел или вышел
     for conn in active_connections.values():
         try:
             await conn.send_json({"type": "status", "email": email, "status": status})
@@ -114,20 +120,18 @@ async def broadcast_status(email, status):
 async def websocket_endpoint(websocket: WebSocket, email: str):
     await websocket.accept()
     active_connections[email] = websocket
-    await broadcast_status(email, "online") # Сообщаем: Юзер в сети!
+    await broadcast_status(email, "online")
 
     try:
         while True:
             data = await websocket.receive_json()
             if data.get("type") == "read_event":
-                # Если кто-то открыл чат, рассылаем уведомление о прочтении
                 sender = data.get("sender")
                 if sender in active_connections:
                     await active_connections[sender].send_json({"type": "read_update", "by": email})
                 continue
 
             receiver = data.get("receiver")
-            # Сохраняем сообщение в базу (is_read по умолчанию 0)
             conn = sqlite3.connect("messenger.db"); cur = conn.cursor()
             cur.execute("INSERT INTO messages (sender_email, receiver_email, text, is_read) VALUES (?, ?, ?, 0)", (email, receiver, data.get("text")))
             conn.commit(); conn.close()
@@ -138,4 +142,4 @@ async def websocket_endpoint(websocket: WebSocket, email: str):
                 })
     except WebSocketDisconnect:
         if email in active_connections: del active_connections[email]
-        await broadcast_status(email, "offline") # Сообщаем: Юзер вышел
+        await broadcast_status(email, "offline")

@@ -1,35 +1,38 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-export default function Chat({ currentUser, onLogout }) {
+export default function Chat({ currentUser, onLogout, onUpdateUser }) {
   const [messages, setMessages] = useState([]);
   const [knownUsers, setKnownUsers] = useState({});
-  const [onlineUsers, setOnlineUsers] = useState(new Set()); // КТО СЕЙЧАС В СЕТИ
+  const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [text, setText] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [activeChat, setActiveChat] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   
+  // ВЕРНУЛИ СОСТОЯНИЯ ДЛЯ НАСТРОЕК
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [editNick, setEditNick] = useState(currentUser.nickname);
+  const [editUser, setEditUser] = useState(currentUser.username);
+  
   const ws = useRef(null);
   const scrollRef = useRef(null);
   const myEmail = currentUser.email;
 
-  // 1. Загрузка истории и всех юзеров (чтобы имена не пропадали)
   useEffect(() => {
     fetch(`http://193.233.139.208:8000/messages/${myEmail}`)
       .then(res => res.json())
       .then(data => {
-        setMessages(data.messages);
-        setKnownUsers(data.users);
-      });
+        setMessages(data.messages || []);
+        setKnownUsers(data.users || {});
+      })
+      .catch(() => setMessages([]));
   }, [myEmail]);
 
-  // 2. WebSocket: Сообщения + Статусы + Прочтение
   useEffect(() => {
     ws.current = new WebSocket(`ws://193.233.139.208:8000/ws/${myEmail}`);
     ws.current.onmessage = (e) => {
       const data = JSON.parse(e.data);
-      
       if (data.type === "status") {
         setOnlineUsers(prev => {
           const next = new Set(prev);
@@ -39,35 +42,30 @@ export default function Chat({ currentUser, onLogout }) {
       } else if (data.type === "msg") {
         setMessages(prev => [...prev, data]);
       } else if (data.type === "read_update") {
-        // Если собеседник прочитал наши сообщения — рисуем галочки
         setMessages(prev => prev.map(m => m.receiver === data.by ? {...m, read: true} : m));
       }
     };
     return () => ws.current.close();
   }, [myEmail]);
 
-  // 3. Логика "Прочитано" при открытии чата
   useEffect(() => {
     if (activeChat) {
-      // Сообщаем серверу
       fetch('http://193.233.139.208:8000/messages/read', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ chat_with: activeChat.email, my_email: myEmail })
       });
-      // Сообщаем через сокет собеседнику
       ws.current.send(JSON.stringify({ type: "read_event", sender: activeChat.email }));
-      // У себя тоже помечаем прочитанными
       setMessages(prev => prev.map(m => (m.sender === activeChat.email && m.receiver === myEmail) ? {...m, read: true} : m));
     }
-  }, [activeChat, messages.length]); // Срабатывает при смене чата или новом сообщении
+  }, [activeChat, messages.length]);
 
-  // 4. Поиск (без изменений)
   useEffect(() => {
     const delay = setTimeout(async () => {
       if (searchQuery.length > 1) {
-        const res = await fetch(`http://193.233.139.208:8000/users/search?q=${searchQuery}`);
-        const data = await res.json();
-        setSearchResults(data);
+        try {
+          const res = await fetch(`http://193.233.139.208:8000/users/search?q=${searchQuery}`);
+          if (res.ok) setSearchResults(await res.json());
+        } catch {}
       } else setSearchResults([]);
     }, 300);
     return () => clearTimeout(delay);
@@ -82,11 +80,45 @@ export default function Chat({ currentUser, onLogout }) {
     setText('');
   };
 
+  // ФУНКЦИЯ СОХРАНЕНИЯ НАСТРОЕК
+  const saveSettings = async () => {
+    try {
+      const res = await fetch('http://193.233.139.208:8000/users/update', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ email: myEmail, nickname: editNick, username: editUser })
+      });
+      const data = await res.json();
+      if(res.ok) {
+        onUpdateUser(data);
+        setIsSettingsOpen(false);
+      } else alert(data.detail || "Ошибка сохранения");
+    } catch { alert("Ошибка сервера"); }
+  };
+
   const dialogs = [...new Set(messages.map(m => m.sender === myEmail ? m.receiver : m.sender))];
 
   return (
     <div className="boom-app">
-      {/* Меню профиля (как было) */}
+      {/* ОКНО НАСТРОЕК */}
+      {isSettingsOpen && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h3>⚙️ Настройки профиля</h3>
+            <div className="modal-body">
+              <label>Отображаемое имя</label>
+              <input value={editNick} onChange={e=>setEditNick(e.target.value)} />
+              <label>@username (уникальный)</label>
+              <input value={editUser} onChange={e=>setEditUser(e.target.value)} />
+            </div>
+            <div className="modal-actions">
+              <button onClick={saveSettings} className="save-btn">Сохранить</button>
+              <button onClick={() => setIsSettingsOpen(false)} className="cancel-btn">Отмена</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className={`sidebar-overlay ${isMenuOpen ? 'active' : ''}`} onClick={() => setIsMenuOpen(false)} />
       <div className={`drawer ${isMenuOpen ? 'open' : ''}`}>
         <div className="drawer-header">
            <div className="avatar profile-avatar" style={{background: currentUser.avatar}}>{currentUser.nickname[0]}</div>
@@ -94,7 +126,11 @@ export default function Chat({ currentUser, onLogout }) {
            <span>@{currentUser.username}</span>
         </div>
         <div className="drawer-content">
-          <button className="menu-item logout" onClick={onLogout}>🚪 Выйти</button>
+          {/* КНОПКА НАСТРОЕК ВЕРНУЛАСЬ */}
+          <button className="menu-item" onClick={() => {setIsSettingsOpen(true); setIsMenuOpen(false);}}>
+            <span>⚙️</span> Настройки
+          </button>
+          <button className="menu-item logout" onClick={onLogout}><span>🚪</span> Выйти</button>
         </div>
       </div>
 
@@ -109,7 +145,7 @@ export default function Chat({ currentUser, onLogout }) {
 
         <div className="chat-list">
           {(searchQuery.length > 1 ? searchResults : dialogs).map(item => {
-            const user = typeof item === 'string' ? (knownUsers[item] || {email: item, nickname: item}) : item;
+            const user = typeof item === 'string' ? (knownUsers[item] || {email: item, nickname: item.split('@')[0], avatar: '#333'}) : item;
             const isOnline = onlineUsers.has(user.email);
             const unreadCount = messages.filter(m => m.sender === user.email && m.receiver === myEmail && !m.read).length;
 

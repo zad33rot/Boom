@@ -96,6 +96,28 @@ def login(req: LoginReq):
         return {"status": "ok", "username": res[1], "nickname": res[2], "avatar": res[3], "email": req.email}
     raise HTTPException(status_code=401, detail="Неверный пароль")
 
+# Добавь этот эндпоинт перед WebSocket
+@app.get("/users/search")
+def search_users(q: str):
+    if len(q) < 2: return [] # Начинаем искать от 2-х символов
+    conn = sqlite3.connect("messenger.db")
+    cur = conn.cursor()
+    # Ищем по username или nickname, исключая пустые профили
+    search_query = f"%{q}%"
+    cur.execute("""
+        SELECT username, nickname, avatar_color, email 
+        FROM users 
+        WHERE (username LIKE ? OR nickname LIKE ?) AND password IS NOT NULL
+        LIMIT 10
+    """, (search_query, search_query))
+    rows = cur.fetchall()
+    conn.close()
+    
+    return [
+        {"username": r[0], "nickname": r[1], "avatar": r[2], "email": r[3]} 
+        for r in rows
+    ]
+
 active_connections = {}
 
 @app.websocket("/ws/{email}")

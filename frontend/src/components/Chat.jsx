@@ -3,35 +3,44 @@ import React, { useState, useEffect, useRef } from 'react';
 export default function Chat({ currentUser, onLogout }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
-  const [search, setSearch] = useState('');
-  const [activeChat, setActiveChat] = useState(null);
-  
-  // Состояние для нашего крутого бокового меню
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [activeChat, setActiveChat] = useState(null); // Теперь это объект юзера {email, nickname, username...}
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   
   const ws = useRef(null);
   const scrollRef = useRef(null);
+  const myEmail = currentUser.email;
 
-  // Подключение к сокетам
+  // 1. WebSocket Подключение
   useEffect(() => {
-    if (!currentUser) return;
-    ws.current = new WebSocket(`ws://193.233.139.208:8000/ws/${currentUser}`);
+    ws.current = new WebSocket(`ws://193.233.139.208:8000/ws/${myEmail}`);
     ws.current.onmessage = (e) => setMessages(prev => [...prev, JSON.parse(e.data)]);
     return () => ws.current.close();
-  }, [currentUser]);
+  }, [myEmail]);
 
-  // Автопрокрутка чата вниз
-  useEffect(() => { 
-    scrollRef.current?.scrollIntoView({ behavior: 'smooth' }); 
-  }, [messages]);
+  // 2. Живой поиск пользователей на сервере
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(async () => {
+      if (searchQuery.length > 1) {
+        const res = await fetch(`http://193.233.139.208:8000/users/search?q=${searchQuery}`);
+        const data = await res.json();
+        setSearchResults(data);
+      } else {
+        setSearchResults([]);
+      }
+    }, 300); // Задержка 300мс, чтобы не спамить сервер
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchQuery]);
 
-  // Отправка сообщения
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
   const send = (e) => {
     e.preventDefault();
     if (!text.trim() || !activeChat) return;
     const msg = { 
-      sender: currentUser, 
-      receiver: activeChat, 
+      sender: myEmail, 
+      receiver: activeChat.email, 
       text, 
       time: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) 
     };
@@ -40,136 +49,101 @@ export default function Chat({ currentUser, onLogout }) {
     setText('');
   };
 
-  // Логика списков и поиска
-  const partners = [...new Set(messages.map(m => m.sender === currentUser ? m.receiver : m.sender))];
-  const filtered = partners.filter(p => p.toLowerCase().includes(search.toLowerCase()));
-  const chatMsgs = messages.filter(m => (m.sender === currentUser && m.receiver === activeChat) || (m.sender === activeChat && m.receiver === currentUser));
+  // Список существующих диалогов
+  const dialogs = [...new Set(messages.map(m => m.sender === myEmail ? m.receiver : m.sender))];
 
   return (
-    <div className="boom-app" style={{ position: 'relative', overflow: 'hidden' }}>
-      
-      {/* 1. ЗАТЕМНЕНИЕ ФОНА (когда меню открыто) */}
-      {isMenuOpen && (
-        <div 
-          style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 999, transition: '0.3s' }}
-          onClick={() => setIsMenuOpen(false)} // Закрываем меню по клику на темный фон
-        />
-      )}
-
-      {/* 2. ВЫЕЗЖАЮЩЕЕ МЕНЮ (ТРИ ПОЛОСКИ) */}
-      <div style={{
-        position: 'absolute', top: 0, left: isMenuOpen ? 0 : '-350px',
-        width: '320px', height: '100%', background: '#1a1a2e', // Темный премиальный цвет
-        color: 'white', zIndex: 1000, transition: '0.4s cubic-bezier(0.4, 0, 0.2, 1)', 
-        padding: '25px', display: 'flex', flexDirection: 'column',
-        boxShadow: isMenuOpen ? '5px 0 25px rgba(0,0,0,0.5)' : 'none'
-      }}>
-        {/* Кнопка закрытия крестиком */}
-        <div style={{textAlign: 'right'}}>
-          <span style={{fontSize: 28, cursor: 'pointer', color: '#888', transition: '0.2s'}} onClick={() => setIsMenuOpen(false)}>✕</span>
+    <div className="boom-app">
+      {/* Меню профиля (Glassmorphism) */}
+      <div className={`sidebar-overlay ${isMenuOpen ? 'active' : ''}`} onClick={() => setIsMenuOpen(false)} />
+      <div className={`drawer ${isMenuOpen ? 'open' : ''}`}>
+        <div className="drawer-header">
+           <div className="avatar profile-avatar" style={{background: currentUser.avatar}}>
+             {currentUser.nickname[0]}
+           </div>
+           <h3>{currentUser.nickname}</h3>
+           <span>@{currentUser.username}</span>
         </div>
-        
-        {/* Профиль пользователя */}
-        <div className="avatar" style={{width: 90, height: 90, fontSize: 36, margin: '10px auto 20px', background: 'var(--primary-gradient)', color: 'white'}}>
-          {currentUser[0].toUpperCase()}
-        </div>
-        <h2 style={{textAlign: 'center', marginBottom: 5, fontSize: 22}}>{currentUser.split('@')[0]}</h2>
-        <p style={{textAlign: 'center', color: '#888', fontSize: 14}}>{currentUser}</p>
-
-        {/* Кнопки меню */}
-        <div style={{marginTop: 40, display: 'flex', flexDirection: 'column', gap: 15}}>
-          <button style={{
-            width: '100%', padding: '16px', background: 'rgba(255,255,255,0.05)', 
-            border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: 14, 
-            cursor: 'pointer', textAlign: 'left', fontSize: 16, display: 'flex', gap: 12, alignItems: 'center'
-          }}>
-            ⚙️ Настройки профиля
-          </button>
-          
-          <button 
-            onClick={onLogout} 
-            style={{
-              width: '100%', padding: '16px', background: 'linear-gradient(135deg, #ff4757, #ff6b81)', 
-              border: 'none', color: 'white', borderRadius: 14, cursor: 'pointer', 
-              textAlign: 'left', fontSize: 16, display: 'flex', gap: 12, alignItems: 'center', fontWeight: 'bold'
-            }}>
-            🚪 Выйти из аккаунта
-          </button>
+        <div className="drawer-content">
+          <button className="menu-item"><span>👤</span> Профиль</button>
+          <button className="menu-item"><span>⚙️</span> Настройки</button>
+          <button className="menu-item logout" onClick={onLogout}><span>🚪</span> Выйти</button>
         </div>
       </div>
 
-      {/* 3. ЛЕВАЯ ПАНЕЛЬ (Список чатов) */}
+      {/* Список чатов */}
       <div className="sidebar">
-        <div className="profile-bar">
-          {/* Вот они, наши три полоски! */}
-          <div 
-            style={{cursor: 'pointer', fontSize: 26, marginRight: 15, transition: '0.2s'}} 
-            onClick={() => setIsMenuOpen(true)}
-          >
-            ☰
-          </div>
-          <div style={{fontWeight: '900', fontSize: 20, letterSpacing: '1px'}}>BOOM</div>
+        <div className="sidebar-header">
+          <button className="icon-btn" onClick={() => setIsMenuOpen(true)}>☰</button>
+          <h2>BOOM</h2>
         </div>
         
-        <div className="search-box">
-          <input placeholder="Поиск (введите почту)..." onChange={e=>setSearch(e.target.value)} />
+        <div className="search-bar">
+          <input 
+            placeholder="Поиск по @username..." 
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
         </div>
-        
-        <div style={{flex:1, overflowY:'auto'}}>
-          {filtered.map(p => (
-            <div key={p} className="chat-item" style={{background: p === activeChat ? '#e3f2fd' : ''}} onClick={()=>setActiveChat(p)}>
-              <div style={{display: 'flex', gap: 12, alignItems: 'center'}}>
-                <div className="avatar" style={{width: 40, height: 40, fontSize: 16, background: '#ccc', color: 'white'}}>
-                  {p[0].toUpperCase()}
-                </div>
-                <div>
-                  <div style={{fontWeight:'bold', color: '#333'}}>{p.split('@')[0]}</div>
-                  <div style={{fontSize:13, color:'#888', marginTop: 4}}>Нажмите, чтобы открыть чат</div>
+
+        <div className="chat-list">
+          {searchQuery.length > 1 ? (
+            // РЕЗУЛЬТАТЫ ПОИСКА
+            searchResults.map(user => (
+              <div key={user.email} className="chat-item search-res" onClick={() => {setActiveChat(user); setSearchQuery('');}}>
+                <div className="avatar sm" style={{background: user.avatar}}>{user.nickname[0]}</div>
+                <div className="chat-info">
+                  <div className="name">{user.nickname}</div>
+                  <div className="sub">@{user.username}</div>
                 </div>
               </div>
-            </div>
-          ))}
-          {/* Если ищем кого-то нового */}
-          {search && !partners.includes(search) && (
-            <div className="chat-item" style={{color:'var(--primary)'}} onClick={()=>{setActiveChat(search); setSearch('');}}>
-              Начать чат с <b>{search}</b>
-            </div>
+            ))
+          ) : (
+            // ВАШИ ЧАТЫ (из истории)
+            dialogs.map(email => (
+              <div key={email} className={`chat-item ${activeChat?.email === email ? 'active' : ''}`} onClick={() => setActiveChat({email, nickname: email.split('@')[0]})}>
+                <div className="avatar sm">{email[0].toUpperCase()}</div>
+                <div className="chat-info">
+                  <div className="name">{email.split('@')[0]}</div>
+                  <div className="sub">Нажмите, чтобы открыть</div>
+                </div>
+              </div>
+            ))
           )}
         </div>
       </div>
 
-      {/* 4. ПРАВАЯ ПАНЕЛЬ (Окно переписки) */}
-      <div className="chat-area">
+      {/* Окно чата */}
+      <div className="main-chat">
         {activeChat ? (
           <>
-            <div style={{padding:'20px', background:'white', borderBottom:'1px solid #eee', display: 'flex', alignItems: 'center', gap: 12}}>
-              <div className="avatar" style={{width: 40, height: 40, fontSize: 16, background: 'var(--primary-gradient)', color: 'white'}}>
-                {activeChat[0].toUpperCase()}
+            <div className="chat-top">
+              <div className="avatar sm" style={{background: activeChat.avatar}}>{activeChat.nickname[0]}</div>
+              <div>
+                <div className="name">{activeChat.nickname}</div>
+                <div className="status">в сети</div>
               </div>
-              <b style={{fontSize: 16}}>{activeChat}</b>
             </div>
-            
-            <div className="messages">
-              {chatMsgs.map((m, i) => (
-                <div key={i} className={`msg ${m.sender === currentUser ? 'my' : 'their'}`}>
-                  {m.text}
-                  <div className="msg-footer">
-                    {m.time} {m.sender === currentUser && <span className="ticks">✓✓</span>}
+            <div className="message-list">
+              {messages.filter(m => (m.sender === myEmail && m.receiver === activeChat.email) || (m.sender === activeChat.email && m.receiver === myEmail)).map((m, i) => (
+                <div key={i} className={`message-wrapper ${m.sender === myEmail ? 'sent' : 'received'}`}>
+                  <div className="message-box">
+                    {m.text}
+                    <div className="time">{m.time} {m.sender === myEmail && '✓✓'}</div>
                   </div>
                 </div>
               ))}
               <div ref={scrollRef} />
             </div>
-            
-            <form className="input-area" onSubmit={send}>
-              <input value={text} onChange={e=>setText(e.target.value)} placeholder="Написать сообщение..." />
-              <button className="send-btn">➤</button>
+            <form className="input-row" onSubmit={send}>
+              <input value={text} onChange={e=>setText(e.target.value)} placeholder="Напишите сообщение..." />
+              <button type="submit" className="send-btn">➤</button>
             </form>
           </>
         ) : (
-          <div style={{flex:1, display:'flex', alignItems:'center', justifyContent:'center', color:'#888', fontSize: 16, flexDirection: 'column', gap: 15}}>
-            <div style={{fontSize: 60, opacity: 0.2}}>💬</div>
-            Выберите чат, чтобы начать общение
+          <div className="empty-state">
+            <div className="icon">💬</div>
+            <p>Выберите чат или найдите пользователя</p>
           </div>
         )}
       </div>

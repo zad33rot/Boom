@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import '../index.css';
 
 const API = 'http://193.233.139.208:8000';
 
@@ -21,9 +22,9 @@ export default function Auth({ onLogin }) {
       if (res.ok) {
         if (data.action) setStep(data.action);
         else if (nextStep) setStep(nextStep);
-        else onLogin(data.email); // Передаем email в App.jsx для сокетов
+        else onLogin(data); // Передаем ВЕСЬ объект профиля!
       } else {
-        const errorMessage = Array.isArray(data.detail) ? "Заполните все поля правильно" : data.detail;
+        const errorMessage = Array.isArray(data.detail) ? "Заполните все поля" : data.detail;
         setErr(errorMessage || 'Ошибка связи');
       }
     } catch { setErr('Ошибка связи с сервером'); }
@@ -53,13 +54,11 @@ export default function Auth({ onLogin }) {
         {step === 'profile' && (
           <form onSubmit={(e) => {
             e.preventDefault(); 
+            // ВАЖНО: 3-й аргумент 'login' перекинет нас на вход!
             next('/auth/finalize', { 
-              email: email,
-              code: formData.code,
-              username: formData.user,
-              nickname: formData.nick,
-              password: formData.pass
-            });
+              email: email, code: formData.code, username: formData.user,
+              nickname: formData.nick, password: formData.pass
+            }, 'login'); 
           }}>
             <h2 style={{marginBottom: 15}}>Создание профиля</h2>
             <input placeholder="@username (индивидуальный)" onChange={e=>setFormData({...formData, user: e.target.value})} required />

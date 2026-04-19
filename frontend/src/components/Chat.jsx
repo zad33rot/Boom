@@ -103,7 +103,7 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
       {isSettingsOpen && (
         <div className="modal-overlay">
           <div className="modal">
-            <h3>⚙️ Настройки профиля</h3>
+            <h3>Настройки профиля</h3>
             <div className="modal-body">
               <label>Отображаемое имя</label>
               <input value={editNick} onChange={e=>setEditNick(e.target.value)} />

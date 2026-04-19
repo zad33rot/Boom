@@ -114,6 +114,43 @@ def get_messages(email: str):
     conn.close()
     return {"messages": msgs, "users": users}
 
+# Добавь эту модель к остальным моделям (где LoginReq и тд), если ее нет:
+class ProfileUpdateReq(BaseModel): 
+    email: str
+    username: str
+    nickname: str
+
+# === ОБНОВЛЕНИЕ ПРОФИЛЯ ===
+@app.post("/users/update")
+def update_profile(req: ProfileUpdateReq):
+    conn = sqlite3.connect("messenger.db"); cur = conn.cursor()
+    cur.execute("SELECT email FROM users WHERE username = ? AND email != ?", (req.username, req.email))
+    if cur.fetchone(): conn.close(); raise HTTPException(status_code=400, detail="Юзернейм уже занят!")
+    cur.execute("UPDATE users SET username=?, nickname=? WHERE email=?", (req.username, req.nickname, req.email))
+    conn.commit()
+    cur.execute("SELECT password, username, nickname, avatar_color FROM users WHERE email = ?", (req.email,))
+    res = cur.fetchone(); conn.close()
+    return {"status": "ok", "username": res[1], "nickname": res[2], "avatar": res[3], "email": req.email}
+
+# === ИСТОРИЯ ЧАТОВ ===
+@app.get("/messages/{email}")
+def get_messages(email: str):
+    conn = sqlite3.connect("messenger.db"); cur = conn.cursor()
+    cur.execute("SELECT sender_email, receiver_email, text, timestamp FROM messages WHERE sender_email = ? OR receiver_email = ? ORDER BY timestamp ASC", (email, email))
+    msgs = []; partners = set()
+    for r in cur.fetchall():
+        msgs.append({"sender": r[0], "receiver": r[1], "text": r[2], "time": r[3][11:16] if r[3] else ""})
+        if r[0] != email: partners.add(r[0])
+        if r[1] != email: partners.add(r[1])
+    
+    users = []
+    if partners:
+        placeholders = ",".join("?" * len(partners))
+        cur.execute(f"SELECT email, username, nickname, avatar_color FROM users WHERE email IN ({placeholders})", list(partners))
+        users = [{"email": u[0], "username": u[1], "nickname": u[2], "avatar": u[3]} for u in cur.fetchall()]
+    conn.close()
+    return {"messages": msgs, "users": users}
+
 # === ВЕБСОКЕТЫ ===
 active_connections = {}
 

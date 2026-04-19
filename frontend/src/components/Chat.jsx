@@ -18,16 +18,27 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
   const myEmail = currentUser.email;
 
   // 1. Загрузка истории при старте
+  // 1. Загрузка истории при старте (БЕЗОПАСНАЯ ВЕРСИЯ)
   useEffect(() => {
     fetch(`http://193.233.139.208:8000/messages/${myEmail}`)
-      .then(res => res.json())
-      .then(data => {
-        setMessages(data.messages);
-        const usersMap = {};
-        data.users.forEach(u => usersMap[u.email] = u);
-        setKnownUsers(usersMap);
+      .then(res => {
+        if (!res.ok) throw new Error("Сервер вернул ошибку");
+        return res.json();
       })
-      .catch(() => console.log("Ошибка загрузки истории"));
+      .then(data => {
+        // Защита: если messages существует, ставим их. Иначе пустой массив
+        setMessages(data.messages || []);
+        
+        if (data.users) {
+          const usersMap = {};
+          data.users.forEach(u => usersMap[u.email] = u);
+          setKnownUsers(usersMap);
+        }
+      })
+      .catch(() => {
+        console.log("Ошибка загрузки истории, оставляем пустой чат");
+        setMessages([]); // СПАСАЕТ ОТ ПАДЕНИЯ REACT!
+      });
   }, [myEmail]);
 
   // 2. WebSocket

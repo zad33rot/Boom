@@ -1,14 +1,16 @@
 {
-  "name": "frontend",
+  "name": "boom",
+  "productName": "BOOM",
+  "version": "1.0.0",
   "main": "electron-main.cjs",
   "private": true,
-  "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "desktop": "electron .",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "make-exe": "vite build && electron-builder"
   },
   "dependencies": {
     "react": "^19.2.4",
@@ -29,17 +31,22 @@
   },
   "build": {
     "appId": "com.boom.messenger",
-    "productName": "BoomMessenger",
     "directories": {
       "output": "dist_electron"
     },
     "files": [
       "dist/**/*",
       "electron-main.cjs",
-      "package.json"
+      "package.json",
+      "boom.ico" 
     ],
     "win": {
-      "target": "portable"
+      "icon": "boom.ico",
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   }
 }

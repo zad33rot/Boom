@@ -5,6 +5,8 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1000,
     height: 800,
+    title: "BOOM",
+    icon: path.join(__dirname, 'boom.ico'),
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,

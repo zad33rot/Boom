@@ -1,0 +1,15 @@
+{
+  "name": "BOOM",
+  "short_name": "BOOM",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#8e2de2",
+  "icons": [
+    {
+      "src": "boom.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}

@@ -70,9 +70,9 @@ def login(req: LoginReq):
     if res and res[0] == req.password: return {"status": "ok", "username": res[1], "nickname": res[2], "avatar": res[3], "email": req.email}
     raise HTTPException(status_code=401)
 
-# === ОБНОВЛЕНИЕ ПРОФИЛЯ ===
+# === ОБНОВЛЕНИЕ ПРОФИЛЯ В РЕАЛЬНОМ ВРЕМЕНИ ===
 @app.post("/users/update")
-def update_profile(req: ProfileUpdateReq):
+async def update_profile(req: ProfileUpdateReq):  # Сделали асинхронным!
     conn = sqlite3.connect("messenger.db"); cur = conn.cursor()
     cur.execute("SELECT email FROM users WHERE username = ? AND email != ?", (req.username, req.email))
     if cur.fetchone(): conn.close(); raise HTTPException(status_code=400, detail="Юзернейм уже занят!")
@@ -80,7 +80,16 @@ def update_profile(req: ProfileUpdateReq):
     conn.commit()
     cur.execute("SELECT password, username, nickname, avatar_color FROM users WHERE email = ?", (req.email,))
     res = cur.fetchone(); conn.close()
-    return {"status": "ok", "username": res[1], "nickname": res[2], "avatar": res[3], "email": req.email}
+    
+    updated_user = {"email": req.email, "username": res[1], "nickname": res[2], "avatar": res[3]}
+
+    # ИСПРАВЛЕНИЕ: Рассылаем всем онлайн-юзерам, что профиль обновился!
+    for conn_ws in list(active_connections.values()):
+        try:
+            await conn_ws.send_json({"type": "profile_update", "user": updated_user})
+        except: pass
+
+    return {"status": "ok", **updated_user}
 
 @app.get("/users/search")
 def search_users(q: str):
@@ -98,7 +107,7 @@ def get_messages(email: str):
     cur.execute("SELECT email, username, nickname, avatar_color FROM users")
     users = {u[0]: {"email": u[0], "username": u[1], "nickname": u[2], "avatar": u[3]} for u in cur.fetchall()}
     conn.close()
-    return {"messages": msgs, "users": users}
+    return {"messages": msgs, "users": list(users.values())}
 
 @app.post("/messages/read")
 def mark_as_read(req: ReadReq):
@@ -107,7 +116,7 @@ def mark_as_read(req: ReadReq):
     conn.commit(); conn.close()
     return {"status": "ok"}
 
-# === ВЕБСОКЕТЫ СО СТАТУСАМИ ===
+# === ВЕБСОКЕТЫ ===
 active_connections = {}
 
 async def broadcast_status(email, status):
@@ -119,6 +128,10 @@ async def broadcast_status(email, status):
 @app.websocket("/ws/{email}")
 async def websocket_endpoint(websocket: WebSocket, email: str):
     await websocket.accept()
+    
+    # ИСПРАВЛЕНИЕ: Отправляем список тех, кто УЖЕ в сети
+    await websocket.send_json({"type": "online_list", "users": list(active_connections.keys())})
+    
     active_connections[email] = websocket
     await broadcast_status(email, "online")
 
@@ -138,7 +151,12 @@ async def websocket_endpoint(websocket: WebSocket, email: str):
 
             if receiver in active_connections:
                 await active_connections[receiver].send_json({
-                    "type": "msg", "sender": email, "text": data.get("text"), "time": data.get("time"), "read": False
+                    "type": "msg", 
+                    "sender": email, 
+                    "receiver": receiver, # ВОТ ОНО! Исправление невидимых сообщений!
+                    "text": data.get("text"), 
+                    "time": data.get("time"), 
+                    "read": False
                 })
     except WebSocketDisconnect:
         if email in active_connections: del active_connections[email]

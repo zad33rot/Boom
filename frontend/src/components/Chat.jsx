@@ -9,8 +9,6 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
   const [searchResults, setSearchResults] = useState([]);
   const [activeChat, setActiveChat] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  
-  // ВЕРНУЛИ СОСТОЯНИЯ ДЛЯ НАСТРОЕК
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [editNick, setEditNick] = useState(currentUser.nickname);
   const [editUser, setEditUser] = useState(currentUser.username);
@@ -24,7 +22,11 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
       .then(res => res.json())
       .then(data => {
         setMessages(data.messages || []);
-        setKnownUsers(data.users || {});
+        if (data.users) {
+          const map = {};
+          data.users.forEach(u => map[u.email] = u);
+          setKnownUsers(map);
+        }
       })
       .catch(() => setMessages([]));
   }, [myEmail]);
@@ -33,7 +35,11 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
     ws.current = new WebSocket(`ws://193.233.139.208:8000/ws/${myEmail}`);
     ws.current.onmessage = (e) => {
       const data = JSON.parse(e.data);
-      if (data.type === "status") {
+      
+      if (data.type === "online_list") {
+        // Загружаем тех, кто уже был в сети до нас!
+        setOnlineUsers(new Set(data.users));
+      } else if (data.type === "status") {
         setOnlineUsers(prev => {
           const next = new Set(prev);
           data.status === "online" ? next.add(data.email) : next.delete(data.email);
@@ -43,6 +49,10 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
         setMessages(prev => [...prev, data]);
       } else if (data.type === "read_update") {
         setMessages(prev => prev.map(m => m.receiver === data.by ? {...m, read: true} : m));
+      } else if (data.type === "profile_update") {
+        // Если кто-то сменил имя, мгновенно обновляем везде!
+        setKnownUsers(prev => ({...prev, [data.user.email]: data.user}));
+        setActiveChat(prev => (prev?.email === data.user.email ? data.user : prev));
       }
     };
     return () => ws.current.close();
@@ -80,7 +90,6 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
     setText('');
   };
 
-  // ФУНКЦИЯ СОХРАНЕНИЯ НАСТРОЕК
   const saveSettings = async () => {
     try {
       const res = await fetch('http://193.233.139.208:8000/users/update', {
@@ -99,11 +108,10 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
 
   return (
     <div className="boom-app">
-      {/* ОКНО НАСТРОЕК */}
       {isSettingsOpen && (
         <div className="modal-overlay">
           <div className="modal">
-            <h3>Настройки профиля</h3>
+            <h3>⚙️ Настройки профиля</h3>
             <div className="modal-body">
               <label>Отображаемое имя</label>
               <input value={editNick} onChange={e=>setEditNick(e.target.value)} />
@@ -126,10 +134,7 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
            <span>@{currentUser.username}</span>
         </div>
         <div className="drawer-content">
-          {/* КНОПКА НАСТРОЕК ВЕРНУЛАСЬ */}
-          <button className="menu-item" onClick={() => {setIsSettingsOpen(true); setIsMenuOpen(false);}}>
-            <span>⚙️</span> Настройки
-          </button>
+          <button className="menu-item" onClick={() => {setIsSettingsOpen(true); setIsMenuOpen(false);}}><span>⚙️</span> Настройки</button>
           <button className="menu-item logout" onClick={onLogout}><span>🚪</span> Выйти</button>
         </div>
       </div>

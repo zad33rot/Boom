@@ -3,13 +3,16 @@ import Auth from './components/Auth';
 import Chat from './components/Chat';
 
 function App() {
-  // Теперь тут хранится целый объект: {email, username, nickname, avatar}
   const [currentUser, setCurrentUser] = useState(null);
 
   return (
     <div>
       {currentUser ? (
-        <Chat currentUser={currentUser} onLogout={() => setCurrentUser(null)} />
+        <Chat 
+          currentUser={currentUser} 
+          onLogout={() => setCurrentUser(null)} 
+          onUpdateUser={(newData) => setCurrentUser(newData)} // Чтобы имя менялось сразу!
+        />
       ) : (
         <Auth onLogin={(userData) => setCurrentUser(userData)} />
       )}

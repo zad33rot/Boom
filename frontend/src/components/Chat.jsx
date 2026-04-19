@@ -4,11 +4,17 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
   const [messages, setMessages] = useState([]);
   const [knownUsers, setKnownUsers] = useState({});
   const [onlineUsers, setOnlineUsers] = useState(new Set());
+  
+  const [typingUsers, setTypingUsers] = useState({});
+  const typingTimeouts = useRef({});
+  const lastTypingTime = useRef(0);
+
   const [text, setText] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [activeChat, setActiveChat] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [editNick, setEditNick] = useState(currentUser.nickname);
   const [editUser, setEditUser] = useState(currentUser.username);
@@ -37,7 +43,6 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
       const data = JSON.parse(e.data);
       
       if (data.type === "online_list") {
-        // Загружаем тех, кто уже был в сети до нас!
         setOnlineUsers(new Set(data.users));
       } else if (data.type === "status") {
         setOnlineUsers(prev => {
@@ -47,12 +52,18 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
         });
       } else if (data.type === "msg") {
         setMessages(prev => [...prev, data]);
+        setTypingUsers(prev => ({ ...prev, [data.sender]: false }));
       } else if (data.type === "read_update") {
         setMessages(prev => prev.map(m => m.receiver === data.by ? {...m, read: true} : m));
       } else if (data.type === "profile_update") {
-        // Если кто-то сменил имя, мгновенно обновляем везде!
         setKnownUsers(prev => ({...prev, [data.user.email]: data.user}));
         setActiveChat(prev => (prev?.email === data.user.email ? data.user : prev));
+      } else if (data.type === "typing") {
+        setTypingUsers(prev => ({ ...prev, [data.sender]: true }));
+        clearTimeout(typingTimeouts.current[data.sender]);
+        typingTimeouts.current[data.sender] = setTimeout(() => {
+          setTypingUsers(prev => ({ ...prev, [data.sender]: false }));
+        }, 2500);
       }
     };
     return () => ws.current.close();
@@ -80,6 +91,15 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
     }, 300);
     return () => clearTimeout(delay);
   }, [searchQuery]);
+
+  const handleTyping = (e) => {
+    setText(e.target.value);
+    const now = Date.now();
+    if (activeChat && (now - lastTypingTime.current > 2000)) {
+      ws.current.send(JSON.stringify({ type: "typing", sender: myEmail, receiver: activeChat.email }));
+      lastTypingTime.current = now;
+    }
+  };
 
   const send = (e) => {
     e.preventDefault();
@@ -135,7 +155,7 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
         </div>
         <div className="drawer-content">
           <button className="menu-item" onClick={() => {setIsSettingsOpen(true); setIsMenuOpen(false);}}><span>⚙️</span> Настройки</button>
-          <button className="menu-item logout" onClick={onLogout}><span>🚪</span> Выйти</button>
+          <button className="menu-item logout" onClick={onLogout}><span>🚪</span> Выйти из аккаунта</button>
         </div>
       </div>
 
@@ -152,6 +172,7 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
           {(searchQuery.length > 1 ? searchResults : dialogs).map(item => {
             const user = typeof item === 'string' ? (knownUsers[item] || {email: item, nickname: item.split('@')[0], avatar: '#333'}) : item;
             const isOnline = onlineUsers.has(user.email);
+            const isTyping = typingUsers[user.email];
             const unreadCount = messages.filter(m => m.sender === user.email && m.receiver === myEmail && !m.read).length;
 
             return (
@@ -162,7 +183,9 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
                 </div>
                 <div className="chat-info">
                   <div className="name">{user.nickname}</div>
-                  <div className="sub">{isOnline ? 'в сети' : 'был(а) недавно'}</div>
+                  <div className="sub">
+                    {isTyping ? <span style={{color: 'var(--primary)', fontWeight: 'bold'}}>печатает...</span> : (isOnline ? 'в сети' : 'был(а) недавно')}
+                  </div>
                 </div>
                 {unreadCount > 0 && <div className="unread-badge">{unreadCount}</div>}
               </div>
@@ -175,11 +198,13 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
         {activeChat ? (
           <>
             <div className="chat-top">
+              <button className="icon-btn" style={{marginRight: '15px'}} onClick={() => setActiveChat(null)}>←</button>
+              
               <div className="avatar sm" style={{background: activeChat.avatar}}>{activeChat.nickname[0]}</div>
               <div>
                 <div className="name">{activeChat.nickname}</div>
-                <div className="status" style={{color: onlineUsers.has(activeChat.email) ? '#4caf50' : '#888'}}>
-                  {onlineUsers.has(activeChat.email) ? 'в сети' : 'не в сети'}
+                <div className="status" style={{color: typingUsers[activeChat.email] ? 'var(--primary)' : (onlineUsers.has(activeChat.email) ? '#4caf50' : '#888')}}>
+                  {typingUsers[activeChat.email] ? 'печатает...' : (onlineUsers.has(activeChat.email) ? 'в сети' : 'не в сети')}
                 </div>
               </div>
             </div>
@@ -199,15 +224,28 @@ export default function Chat({ currentUser, onLogout, onUpdateUser }) {
                   </div>
                 </div>
               ))}
+              
+              {typingUsers[activeChat.email] && (
+                <div className="message-wrapper received">
+                  <div className="message-box typing-indicator">
+                    <span className="dot"></span><span className="dot"></span><span className="dot"></span>
+                  </div>
+                </div>
+              )}
+              
               <div ref={scrollRef} />
             </div>
             <form className="input-row" onSubmit={send}>
-              <input value={text} onChange={e=>setText(e.target.value)} placeholder="Напишите сообщение..." />
+              <input value={text} onChange={handleTyping} placeholder="Напишите сообщение..." />
               <button type="submit" className="send-btn">➤</button>
             </form>
           </>
         ) : (
-          <div className="empty-state">💬 Выберите чат</div>
+          <div className="empty-state">
+            <div style={{fontSize: 70, opacity: 0.3, marginBottom: 20}}>💬</div>
+            <h2>Ваши сообщения</h2>
+            <p style={{marginTop: 10}}>Выберите кому хотели бы написать</p>
+          </div>
         )}
       </div>
     </div>

@@ -139,22 +139,48 @@ def mark_as_read(req: ReadReq):
     conn.commit(); conn.close()
     return {"status": "ok"}
 
-# === ВЕБСОКЕТЫ (ОТПРАВКА) ===
+# === ВЕБСОКЕТЫ ===
 active_connections = {}
+
+async def broadcast_status(email, status):
+    for conn in active_connections.values():
+        try:
+            await conn.send_json({"type": "status", "email": email, "status": status})
+        except: pass
 
 @app.websocket("/ws/{email}")
 async def websocket_endpoint(websocket: WebSocket, email: str):
     await websocket.accept()
+    # 1. Отправляем юзеру список тех, кто уже онлайн
+    await websocket.send_json({"type": "online_list", "users": list(active_connections.keys())})
+    
     active_connections[email] = websocket
+    # 2. Говорим всем остальным, что юзер зашел (СТАТУС)
+    await broadcast_status(email, "online")
+
     try:
         while True:
             data = await websocket.receive_json()
             
+            # --- ОБРАБОТКА ПРОЧИТАННЫХ СООБЩЕНИЙ (ГАЛОЧКИ) ---
+            if data.get("type") == "read_event":
+                sender = data.get("sender")
+                if sender in active_connections:
+                    await active_connections[sender].send_json({"type": "read_update", "by": email})
+                continue
+
+            # --- ОБРАБОТКА ПЕЧАТАНИЯ ---
+            if data.get("type") == "typing":
+                receiver = data.get("receiver")
+                if receiver in active_connections:
+                    await active_connections[receiver].send_json({"type": "typing", "sender": email})
+                continue
+
+            # --- ОБРАБОТКА НОВЫХ СООБЩЕНИЙ (с шифрованием) ---
             if data.get("type") == "msg":
                 receiver = data.get("receiver")
                 raw_text = data.get("text")
                 
-                # ШИФРУЕМ ТЕКСТ ПЕРЕД СОХРАНЕНИЕМ В БАЗУ
                 encrypted_text = encrypt_msg(raw_text)
                 
                 conn = sqlite3.connect("messenger.db"); cur = conn.cursor()
@@ -167,6 +193,8 @@ async def websocket_endpoint(websocket: WebSocket, email: str):
                         "type": "msg", "sender": email, "receiver": receiver,
                         "text": raw_text, "time": data.get("time"), "read": False
                     })
-            # ... (логика typing и read_event остается такой же) ...
+                    
     except WebSocketDisconnect:
         if email in active_connections: del active_connections[email]
+        # 3. Говорим всем, что юзер вышел (СТАТУС)
+        await broadcast_status(email, "offline")
